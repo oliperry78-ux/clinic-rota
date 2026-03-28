@@ -1,0 +1,16 @@
+{
+  "name": "clinic-rota-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.6.0",
+    "clinic-staff-rota": "file:..",
+    "cors": "^2.8.5",
+    "express": "^4.21.0"
+  }
+}

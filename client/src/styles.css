@@ -1,0 +1,590 @@
+:root {
+  --bg: #f4f6f9;
+  --card: #fff;
+  --text: #1a1f2e;
+  --muted: #5c6578;
+  --border: #d8dee8;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --gap: #fef2f2;
+  --gap-border: #f87171;
+  --filled: #ecfdf5;
+  --filled-border: #34d399;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+}
+
+.nav {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.nav a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius);
+  font-weight: 500;
+}
+
+.nav a:hover {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.nav a.active {
+  color: var(--primary);
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.main {
+  min-height: 50vh;
+}
+
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+button,
+.btn {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 6px;
+  border: none;
+  padding: 0.45rem 0.85rem;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 500;
+}
+
+button:hover,
+.btn:hover {
+  background: var(--primary-hover);
+}
+
+button.secondary {
+  background: #e5e7eb;
+  color: var(--text);
+}
+
+button.secondary:hover {
+  background: #d1d5db;
+}
+
+button.danger {
+  background: #dc2626;
+}
+
+button.danger:hover {
+  background: #b91c1c;
+}
+
+input,
+select {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+label {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.error-banner {
+  background: #fef2f2;
+  color: #991b1b;
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.notice-banner {
+  background: var(--filled);
+  color: #065f46;
+  border: 1px solid var(--filled-border);
+  padding: 0.6rem 0.85rem;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.staff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.staff-table th,
+.staff-table td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.staff-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.week-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.5rem;
+}
+
+@media (max-width: 900px) {
+  .week-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.day-column {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.5rem;
+  min-height: 120px;
+  background: #fafbfc;
+}
+
+.day-column h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.shift-block {
+  font-size: 0.8rem;
+  padding: 0.45rem 0.5rem;
+  border-radius: 6px;
+  margin-bottom: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.shift-block.filled {
+  background: var(--filled);
+  border-color: var(--filled-border);
+}
+
+.shift-block.gap {
+  background: var(--gap);
+  border-color: var(--gap-border);
+}
+
+.shift-block .meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.rota-assign {
+  width: 100%;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+}
+
+.badge-gap {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #b91c1c;
+  margin-bottom: 0.2rem;
+}
+
+.badge-filled {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #047857;
+  margin-bottom: 0.2rem;
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.form-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.avail-grid {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.avail-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 1fr 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 600px) {
+  .avail-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.legend {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.swatch.filled {
+  background: var(--filled);
+  border-color: var(--filled-border);
+}
+
+.swatch.gap {
+  background: var(--gap);
+  border-color: var(--gap-border);
+}
+
+/* Rota page: timetable-style grid (not card stacks) */
+.rota-page-section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0.75rem 1rem 1rem;
+  margin-bottom: 1rem;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.rota-page-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.rota-week-toolbar {
+  margin-bottom: 0.65rem;
+}
+
+.rota-grid-wrap {
+  overflow-x: hidden;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 0;
+}
+
+.rota-grid {
+  display: grid;
+  gap: 0;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+}
+
+/* Direct grid items only (headers, clinic labels, day cells — rows use display:contents) */
+.rota-grid > * {
+  min-width: 0;
+}
+
+.rota-grid-row {
+  display: contents;
+}
+
+.rota-grid-header-corner,
+.rota-grid-header-day {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #eef2f7;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.rota-grid-header-corner {
+  left: 0;
+  z-index: 3;
+}
+
+.rota-grid-clinic {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: #f5f7fa;
+  padding: 0.4rem 0.35rem;
+  font-weight: 700;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  align-self: stretch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.rota-grid-cell {
+  position: relative;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: #fff;
+  padding: 0.4rem 0.35rem;
+  min-height: 120px;
+  min-width: 0;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+}
+
+.rota-empty-cell {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.rota-cell-line {
+  font-size: 0.78rem;
+  color: var(--text);
+  line-height: 1.45;
+  margin: 0 0 0.2rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.rota-cell-line:last-child {
+  margin-bottom: 0;
+}
+
+.rota-label {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.rota-cell-window {
+  margin-bottom: 0.35rem;
+}
+
+.rota-cell-receptionist {
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid #e8ecf2;
+}
+
+.rota-sessions-flat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rota-session-block {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rota-session-heading {
+  font-weight: 600;
+  margin-bottom: 0.15rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.rota-session-indent {
+  padding-left: 0.5rem;
+  font-size: 0.76rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+button.rota-edit-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button.rota-edit-link:hover {
+  color: var(--primary-hover);
+}
+
+button.rota-edit-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.rota-popup {
+  position: fixed;
+  z-index: 1000;
+  max-height: min(320px, calc(100vh - 16px));
+  overflow: auto;
+  margin: 0;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 0.5rem;
+  /* top, left, width set inline from anchor Edit button getBoundingClientRect */
+}
+
+/* Primary Assign buttons only (~17% smaller); keep secondary Unassign / close unchanged */
+.rota-popup button:not(.secondary) {
+  padding: 0.37rem 0.7rem;
+  font-size: 0.875rem;
+}
+
+.rota-popup-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.rota-close-btn {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+}
+
+.rota-tier-heading {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 0 0.15rem;
+}
+
+.rota-popup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.rota-popup-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  justify-content: space-between;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.22rem 0.3rem;
+  font-size: 0.76rem;
+}
+
+.rota-assigned-row {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.28);
+}
+
+.rota-assigned-chip {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #0f766e;
+  background: rgba(16, 185, 129, 0.15);
+  padding: 0.08rem 0.32rem;
+  border-radius: 999px;
+}
