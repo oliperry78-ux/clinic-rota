@@ -124,7 +124,11 @@ app.put("/api/staff/:id", (req, res) => {
 
 app.delete("/api/staff/:id", (req, res) => {
   const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: "invalid staff id" });
+  }
   db.prepare("UPDATE shifts SET assigned_staff_id = NULL WHERE assigned_staff_id = ?").run(id);
+  db.prepare("DELETE FROM clinic_day_receptionist_slots WHERE staff_id = ?").run(id);
   const info = db.prepare("DELETE FROM staff WHERE id = ?").run(id);
   if (info.changes === 0) return res.status(404).json({ error: "staff not found" });
   res.status(204).send();

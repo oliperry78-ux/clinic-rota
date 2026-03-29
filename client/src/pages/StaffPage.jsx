@@ -54,6 +54,12 @@ function formatAllowedClinics(ac) {
   return ac.clinics.join(", ");
 }
 
+function formatAvailLine(av) {
+  if (!av?.length) return "—";
+  const names = { 0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat" };
+  return av.map((a) => `${names[a.day]} ${a.start}–${a.end}`).join(", ");
+}
+
 function clampCapacity(n) {
   const v = Math.floor(Number(n));
   if (!Number.isFinite(v) || v < 1) return 1;
@@ -63,6 +69,55 @@ function clampCapacity(n) {
 function allowedClinicsPayload(all, text) {
   if (all) return { all: true };
   return { all: false, clinics: parseClinicsCsv(text) };
+}
+
+/** Stable numeric id for API and React keys (avoids string/number mix-ups from JSON). */
+function staffNumericId(s) {
+  const n = Number(s?.id);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function StaffTableRow({ member, editingId, onStartEdit, onCancelEdit, onSaveEdit, onRemove }) {
+  const id = staffNumericId(member);
+  const isEditing = editingId === id;
+
+  return (
+    <tr>
+      <td>{member.name}</td>
+      <td>{member.role}</td>
+      <td>{member.staff_type ?? "Full time"}</td>
+      <td>{clampCapacity(member.capacity ?? 1)}</td>
+      <td style={{ maxWidth: "14rem", fontSize: "0.85rem" }}>{formatAllowedClinics(member.allowed_clinics)}</td>
+      <td style={{ fontSize: "0.85rem", lineHeight: 1.35, maxWidth: "22rem", whiteSpace: "normal" }}>
+        <div>Week 1: {formatAvailLine(member.availability?.week1)}</div>
+        <div>Week 2: {formatAvailLine(member.availability?.week2)}</div>
+      </td>
+      <td>
+        {isEditing ? (
+          <>
+            <button type="button" className="secondary" onClick={onCancelEdit}>
+              Cancel
+            </button>{" "}
+            <button type="button" onClick={onSaveEdit}>
+              Save
+            </button>{" "}
+            <button type="button" className="danger" onClick={() => onRemove(id)}>
+              Delete
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" className="secondary" onClick={() => onStartEdit(member)}>
+              Edit
+            </button>{" "}
+            <button type="button" className="danger" onClick={() => onRemove(id)}>
+              Delete
+            </button>
+          </>
+        )}
+      </td>
+    </tr>
+  );
 }
 
 function AvailabilityEditor({ rows, onChange }) {
@@ -140,7 +195,7 @@ export default function StaffPage() {
     setError(null);
     try {
       const list = await api.getStaff();
-      setStaff(list);
+      setStaff(list.map((row) => ({ ...row, id: Number(row.id) })));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -182,7 +237,12 @@ export default function StaffPage() {
   }
 
   function startEdit(s) {
-    setEditingId(s.id);
+    const nid = staffNumericId(s);
+    if (!Number.isFinite(nid)) {
+      setError("Could not edit: invalid staff id.");
+      return;
+    }
+    setEditingId(nid);
     const av = s.availability;
     const w1 = Array.isArray(av?.week1) ? av.week1 : [];
     const w2 = Array.isArray(av?.week2) ? av.week2 : [];
@@ -222,21 +282,21 @@ export default function StaffPage() {
     }
   }
 
-  async function remove(id) {
+  async function remove(rawId) {
+    const id = Number(rawId);
+    if (!Number.isFinite(id) || id <= 0) {
+      setError("Could not delete: invalid staff id.");
+      return;
+    }
     if (!confirm("Remove this staff member? Assignments on shifts will be cleared.")) return;
     setError(null);
     try {
       await api.deleteStaff(id);
+      setEditingId((cur) => (cur === id ? null : cur));
       await load();
     } catch (err) {
       setError(err.message);
     }
-  }
-
-  function formatAvailLine(av) {
-    if (!av?.length) return "—";
-    const names = { 0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat" };
-    return av.map((a) => `${names[a.day]} ${a.start}–${a.end}`).join(", ");
   }
 
   return (
@@ -331,46 +391,26 @@ export default function StaffPage() {
               </tr>
             </thead>
             <tbody>
-              {staff.map((s) => (
-                <tr key={s.id}>
-                  <td>{s.name}</td>
-                  <td>{s.role}</td>
-                  <td>{s.staff_type ?? "Full time"}</td>
-                  <td>{clampCapacity(s.capacity ?? 1)}</td>
-                  <td style={{ maxWidth: "14rem", fontSize: "0.85rem" }}>{formatAllowedClinics(s.allowed_clinics)}</td>
-                  <td style={{ fontSize: "0.85rem", lineHeight: 1.35, maxWidth: "22rem", whiteSpace: "normal" }}>
-                    <div>Week 1: {formatAvailLine(s.availability?.week1)}</div>
-                    <div>Week 2: {formatAvailLine(s.availability?.week2)}</div>
-                  </td>
-                  <td>
-                    {editingId === s.id ? (
-                      <>
-                        <button type="button" className="secondary" onClick={cancelEdit}>
-                          Cancel
-                        </button>{" "}
-                        <button type="button" onClick={saveEdit}>
-                          Save
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button type="button" className="secondary" onClick={() => startEdit(s)}>
-                          Edit
-                        </button>{" "}
-                        <button type="button" className="danger" onClick={() => remove(s.id)}>
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {staff.map((s, idx) => {
+                const rowKey = staffNumericId(s);
+                return (
+                  <StaffTableRow
+                    key={Number.isFinite(rowKey) ? rowKey : `staff-row-${idx}`}
+                    member={s}
+                    editingId={editingId}
+                    onStartEdit={startEdit}
+                    onCancelEdit={cancelEdit}
+                    onSaveEdit={saveEdit}
+                    onRemove={remove}
+                  />
+                );
+              })}
             </tbody>
           </table>
         )}
       </section>
 
-      {editingId != null && (
+      {editingId != null && Number.isFinite(editingId) && (
         <section className="card">
           <h2>Editing — {staff.find((s) => s.id === editingId)?.name}</h2>
           <div className="form-row" style={{ marginBottom: "0.75rem" }}>
