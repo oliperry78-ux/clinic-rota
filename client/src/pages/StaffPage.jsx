@@ -125,9 +125,11 @@ export default function StaffPage() {
   const [createAllowedAll, setCreateAllowedAll] = useState(true);
   const [createAllowedClinicsText, setCreateAllowedClinicsText] = useState("");
   /** Rows for the “Add staff” form only */
-  const [createRows, setCreateRows] = useState(() => emptyAvailability());
+  const [createRowsW1, setCreateRowsW1] = useState(() => emptyAvailability());
+  const [createRowsW2, setCreateRowsW2] = useState(() => emptyAvailability());
   const [editingId, setEditingId] = useState(null);
-  const [editRows, setEditRows] = useState(() => emptyAvailability());
+  const [editRowsW1, setEditRowsW1] = useState(() => emptyAvailability());
+  const [editRowsW2, setEditRowsW2] = useState(() => emptyAvailability());
   const [editRole, setEditRole] = useState("receptionist");
   const [editStaffType, setEditStaffType] = useState("Full time");
   const [editCapacity, setEditCapacity] = useState(1);
@@ -158,7 +160,10 @@ export default function StaffPage() {
         name,
         role,
         staff_type: staffType,
-        availability: rowsToAvailability(createRows),
+        availability: {
+          week1: rowsToAvailability(createRowsW1),
+          week2: rowsToAvailability(createRowsW2),
+        },
         capacity: clampCapacity(capacity),
         allowed_clinics: allowedClinicsPayload(createAllowedAll, createAllowedClinicsText),
       });
@@ -168,7 +173,8 @@ export default function StaffPage() {
       setCapacity(1);
       setCreateAllowedAll(true);
       setCreateAllowedClinicsText("");
-      setCreateRows(emptyAvailability());
+      setCreateRowsW1(emptyAvailability());
+      setCreateRowsW2(emptyAvailability());
       await load();
     } catch (err) {
       setError(err.message);
@@ -177,7 +183,11 @@ export default function StaffPage() {
 
   function startEdit(s) {
     setEditingId(s.id);
-    setEditRows(staffToRows(s.availability));
+    const av = s.availability;
+    const w1 = Array.isArray(av?.week1) ? av.week1 : [];
+    const w2 = Array.isArray(av?.week2) ? av.week2 : [];
+    setEditRowsW1(staffToRows(w1));
+    setEditRowsW2(staffToRows(w2));
     setEditRole(s.role ?? "receptionist");
     setEditStaffType(s.staff_type ?? "Full time");
     setEditCapacity(clampCapacity(s.capacity ?? 1));
@@ -198,7 +208,10 @@ export default function StaffPage() {
         name: s.name,
         role: editRole,
         staff_type: editStaffType,
-        availability: rowsToAvailability(editRows),
+        availability: {
+          week1: rowsToAvailability(editRowsW1),
+          week2: rowsToAvailability(editRowsW2),
+        },
         capacity: clampCapacity(editCapacity),
         allowed_clinics: allowedClinicsPayload(editAllowedAll, editAllowedClinicsText),
       });
@@ -220,7 +233,7 @@ export default function StaffPage() {
     }
   }
 
-  function formatAvail(av) {
+  function formatAvailLine(av) {
     if (!av?.length) return "—";
     const names = { 0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat" };
     return av.map((a) => `${names[a.day]} ${a.start}–${a.end}`).join(", ");
@@ -233,8 +246,8 @@ export default function StaffPage() {
       <section className="card">
         <h2>Add staff</h2>
         <p style={{ margin: "0 0 0.75rem", fontSize: "0.9rem", color: "var(--muted)" }}>
-          Set which days and hours each person can work. The rota only allows assignments inside these
-          windows.
+          Set two repeating weekly patterns (Week 1 and Week 2) that alternate every calendar week. The rota
+          only allows assignments inside the matching week&apos;s windows for each session date.
         </p>
         <form onSubmit={handleCreate}>
           <div className="form-row">
@@ -293,7 +306,10 @@ export default function StaffPage() {
               )}
             </div>
           </div>
-          <AvailabilityEditor rows={createRows} onChange={setCreateRows} />
+          <h3 style={{ fontSize: "0.95rem", margin: "0.75rem 0 0.5rem" }}>Week 1 availability</h3>
+          <AvailabilityEditor rows={createRowsW1} onChange={setCreateRowsW1} />
+          <h3 style={{ fontSize: "0.95rem", margin: "0.75rem 0 0.5rem" }}>Week 2 availability</h3>
+          <AvailabilityEditor rows={createRowsW2} onChange={setCreateRowsW2} />
         </form>
       </section>
 
@@ -322,7 +338,10 @@ export default function StaffPage() {
                   <td>{s.staff_type ?? "Full time"}</td>
                   <td>{clampCapacity(s.capacity ?? 1)}</td>
                   <td style={{ maxWidth: "14rem", fontSize: "0.85rem" }}>{formatAllowedClinics(s.allowed_clinics)}</td>
-                  <td>{formatAvail(s.availability)}</td>
+                  <td style={{ fontSize: "0.85rem", lineHeight: 1.35, maxWidth: "22rem", whiteSpace: "normal" }}>
+                    <div>Week 1: {formatAvailLine(s.availability?.week1)}</div>
+                    <div>Week 2: {formatAvailLine(s.availability?.week2)}</div>
+                  </td>
                   <td>
                     {editingId === s.id ? (
                       <>
@@ -401,8 +420,10 @@ export default function StaffPage() {
               )}
             </div>
           </div>
-          <h3 style={{ fontSize: "0.95rem", margin: "0 0 0.5rem" }}>Availability</h3>
-          <AvailabilityEditor rows={editRows} onChange={setEditRows} />
+          <h3 style={{ fontSize: "0.95rem", margin: "0 0 0.5rem" }}>Week 1 availability</h3>
+          <AvailabilityEditor rows={editRowsW1} onChange={setEditRowsW1} />
+          <h3 style={{ fontSize: "0.95rem", margin: "0.75rem 0 0.5rem" }}>Week 2 availability</h3>
+          <AvailabilityEditor rows={editRowsW2} onChange={setEditRowsW2} />
         </section>
       )}
     </div>

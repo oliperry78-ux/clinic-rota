@@ -18,8 +18,8 @@ db.exec(`
     name TEXT NOT NULL,
     role TEXT NOT NULL,
     staff_type TEXT NOT NULL DEFAULT 'Full time',
-    /* JSON array: [{ "day": 0-6 (Sun-Sat), "start": "09:00", "end": "17:00" }, ...] */
-    availability_json TEXT NOT NULL DEFAULT '[]',
+    /* JSON: { "week1": [...], "week2": [...] } — weekday slots per repeating biweek half */
+    availability_json TEXT NOT NULL DEFAULT '{"week1":[],"week2":[]}',
     capacity INTEGER NOT NULL DEFAULT 1,
     /* JSON: { "all": true } or { "all": false, "clinics": ["Main", …] } */
     allowed_clinics_json TEXT NOT NULL DEFAULT '{"all":true}'
@@ -196,3 +196,24 @@ migrateShiftsClinicUnique();
 migrateShiftsSessionUnique();
 migrateShiftSessionRoleTag();
 migrateStaffAssistantRoleName();
+
+/** Legacy rows stored a single weekly array; copy it to both week1 and week2. */
+function migrateStaffBiweeklyAvailability() {
+  const rows = db.prepare("SELECT id, availability_json FROM staff").all();
+  for (const row of rows) {
+    let raw;
+    try {
+      raw = JSON.parse(row.availability_json);
+    } catch {
+      continue;
+    }
+    if (Array.isArray(raw)) {
+      db.prepare("UPDATE staff SET availability_json = ? WHERE id = ?").run(
+        JSON.stringify({ week1: raw, week2: raw }),
+        row.id
+      );
+    }
+  }
+}
+
+migrateStaffBiweeklyAvailability();

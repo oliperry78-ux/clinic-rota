@@ -18,6 +18,50 @@ export function dateStringToDayOfWeek(isoDate) {
   return dt.getUTCDay();
 }
 
+/** UTC Monday 2000-01-03 — anchor for a continuous 2-week cycle (weeks since this Monday, mod 2). */
+const BIWEEK_EPOCH_MONDAY_UTC_MS = Date.UTC(2000, 0, 3);
+
+/**
+ * Which biweek half the calendar week of `isoDate` falls in: 0 = week 1 pattern, 1 = week 2 pattern.
+ * Uses the Monday-start week containing the date (UTC), same calendar interpretation as `dateStringToDayOfWeek`.
+ */
+export function biweekCycleIndexFromIsoDate(isoDate) {
+  const [y, mo, d] = String(isoDate).split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return 0;
+  const dayMs = Date.UTC(y, mo - 1, d);
+  const dow = new Date(dayMs).getUTCDay();
+  const mondayOffset = (dow + 6) % 7;
+  const mondayMs = dayMs - mondayOffset * 24 * 60 * 60 * 1000;
+  const weeks = Math.floor((mondayMs - BIWEEK_EPOCH_MONDAY_UTC_MS) / (7 * 24 * 60 * 60 * 1000));
+  return ((weeks % 2) + 2) % 2;
+}
+
+export function availabilitySlotsForIsoDate(availabilityParsed, isoDate) {
+  const idx = biweekCycleIndexFromIsoDate(isoDate);
+  const w1 = Array.isArray(availabilityParsed?.week1) ? availabilityParsed.week1 : [];
+  const w2 = Array.isArray(availabilityParsed?.week2) ? availabilityParsed.week2 : [];
+  return idx === 0 ? w1 : w2;
+}
+
+/** Full-window containment for the correct biweek pattern on `isoDate`. */
+export function isWithinAvailabilityForIsoDate(availabilityParsed, isoDate, dayOfWeek, shiftStart, shiftEnd) {
+  const slots = availabilitySlotsForIsoDate(availabilityParsed, isoDate);
+  return isWithinAvailability(slots, dayOfWeek, shiftStart, shiftEnd);
+}
+
+/** Normalize API/DB payload to { week1, week2 } before persisting. */
+export function normalizeAvailabilityForStorage(input) {
+  if (input == null) return { week1: [], week2: [] };
+  if (Array.isArray(input)) return { week1: input, week2: input };
+  if (typeof input === "object") {
+    return {
+      week1: Array.isArray(input.week1) ? input.week1 : [],
+      week2: Array.isArray(input.week2) ? input.week2 : [],
+    };
+  }
+  return { week1: [], week2: [] };
+}
+
 /**
  * True if [aStart, aEnd) overlaps [bStart, bEnd) on the same timeline.
  * Touching at boundary (end === other start) is NOT overlap.
@@ -160,9 +204,16 @@ export function staffAlreadyInReceptionistBlock(db, shiftDate, clinic, staffId, 
 
 export function parseAvailabilityJson(json) {
   try {
-    const arr = JSON.parse(json);
-    return Array.isArray(arr) ? arr : [];
+    const raw = JSON.parse(json);
+    if (Array.isArray(raw)) return { week1: raw, week2: raw };
+    if (raw && typeof raw === "object") {
+      return {
+        week1: Array.isArray(raw.week1) ? raw.week1 : [],
+        week2: Array.isArray(raw.week2) ? raw.week2 : [],
+      };
+    }
   } catch {
-    return [];
+    /* ignore */
   }
+  return { week1: [], week2: [] };
 }

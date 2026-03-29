@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { db } from "./database.js";
-import { parseAvailabilityJson } from "./scheduling.js";
+import { normalizeAvailabilityForStorage, parseAvailabilityJson } from "./scheduling.js";
 
 function normalizeCapacity(raw) {
   const n = Math.floor(Number(raw));
@@ -74,7 +74,7 @@ app.post("/api/staff", (req, res) => {
   if (!name || !role) {
     return res.status(400).json({ error: "name and role are required" });
   }
-  const availability_json = JSON.stringify(availability ?? []);
+  const availability_json = JSON.stringify(normalizeAvailabilityForStorage(availability));
   const roleNormalized = normalizeRole(role);
   const cap = normalizeCapacity(capacity ?? 1);
   const staffType = normalizeStaffType(staff_type);
@@ -95,7 +95,9 @@ app.put("/api/staff/:id", (req, res) => {
   if (!existing) return res.status(404).json({ error: "staff not found" });
 
   const availability_json =
-    availability !== undefined ? JSON.stringify(availability) : existing.availability_json;
+    availability !== undefined
+      ? JSON.stringify(normalizeAvailabilityForStorage(availability))
+      : existing.availability_json;
   const roleNormalized = role !== undefined ? normalizeRole(role) : normalizeRole(existing.role);
   const cap = capacity !== undefined ? normalizeCapacity(capacity) : normalizeCapacity(existing.capacity ?? 1);
   const staffType =

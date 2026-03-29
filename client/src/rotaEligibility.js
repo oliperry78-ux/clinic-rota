@@ -4,6 +4,36 @@ export function dateStringToDayOfWeek(isoDate) {
   return new Date(Date.UTC(y, mo - 1, d)).getUTCDay();
 }
 
+const BIWEEK_EPOCH_MONDAY_UTC_MS = Date.UTC(2000, 0, 3);
+
+/** 0 = week 1 pattern, 1 = week 2 pattern — same rule as server `biweekCycleIndexFromIsoDate`. */
+export function biweekCycleIndexFromIsoDate(isoDate) {
+  const [y, mo, d] = String(isoDate).split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return 0;
+  const dayMs = Date.UTC(y, mo - 1, d);
+  const dow = new Date(dayMs).getUTCDay();
+  const mondayOffset = (dow + 6) % 7;
+  const mondayMs = dayMs - mondayOffset * 24 * 60 * 60 * 1000;
+  const weeks = Math.floor((mondayMs - BIWEEK_EPOCH_MONDAY_UTC_MS) / (7 * 24 * 60 * 60 * 1000));
+  return ((weeks % 2) + 2) % 2;
+}
+
+function normalizeStaffAvailabilityShape(av) {
+  if (Array.isArray(av)) return { week1: av, week2: av };
+  if (av && typeof av === "object") {
+    return {
+      week1: Array.isArray(av.week1) ? av.week1 : [],
+      week2: Array.isArray(av.week2) ? av.week2 : [],
+    };
+  }
+  return { week1: [], week2: [] };
+}
+
+function availabilitySlotsForIsoDate(availability, isoDate) {
+  const { week1, week2 } = normalizeStaffAvailabilityShape(availability);
+  return biweekCycleIndexFromIsoDate(isoDate) === 0 ? week1 : week2;
+}
+
 function timeToMinutes(t) {
   const [h, m] = String(t).split(":").map(Number);
   return h * 60 + m;
@@ -28,6 +58,12 @@ export function isWithinAvailability(availability, dayOfWeek, shiftStart, shiftE
     const ae = timeToMinutes(slot.end);
     return as <= s && e <= ae;
   });
+}
+
+/** Uses week1 or week2 slots according to the biweek calendar week of `isoDate`. */
+export function isWithinAvailabilityForIsoDate(availability, isoDate, dayOfWeek, shiftStart, shiftEnd) {
+  const slots = availabilitySlotsForIsoDate(availability, isoDate);
+  return isWithinAvailability(slots, dayOfWeek, shiftStart, shiftEnd);
 }
 
 export function staffAllowedAtClinic(staff, clinicTrim) {
@@ -58,7 +94,7 @@ export function eligibleReceptionistsForBlock(staffList, clinicTrim, isoDate, re
   return staffList.filter((p) => {
     if (String(p.role || "").trim().toLowerCase() !== "receptionist") return false;
     if (!staffAllowedAtClinic(p, clinicTrim)) return false;
-    return isWithinAvailability(p.availability, dow, requiredStart, requiredEnd);
+    return isWithinAvailabilityForIsoDate(p.availability, isoDate, dow, requiredStart, requiredEnd);
   });
 }
 
@@ -84,7 +120,8 @@ export function eligibleAssistantsForSession(staffList, allShifts, targetShift) 
     // Availability must cover full buffered session window.
     const requiredStart = `${String(Math.floor(targetWin.startMin / 60)).padStart(2, "0")}:${String(targetWin.startMin % 60).padStart(2, "0")}`;
     const requiredEnd = `${String(Math.floor(targetWin.endMin / 60)).padStart(2, "0")}:${String(targetWin.endMin % 60).padStart(2, "0")}`;
-    if (!isWithinAvailability(p.availability, dow, requiredStart, requiredEnd)) return false;
+    if (!isWithinAvailabilityForIsoDate(p.availability, targetShift.shift_date, dow, requiredStart, requiredEnd))
+      return false;
 
     // Block if already assigned to another overlapping buffered session.
     for (const s of shifts) {
