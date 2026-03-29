@@ -55,10 +55,9 @@ export default function RotaPage() {
   const [activePopup, setActivePopup] = useState(null);
   const [popupFixedPos, setPopupFixedPos] = useState(null);
   const [copyForwardBusy, setCopyForwardBusy] = useState(false);
-  const [copyForwardMenuOpen, setCopyForwardMenuOpen] = useState(false);
+  const [copyForwardFreq, setCopyForwardFreq] = useState("");
   const popupRef = useRef(null);
   const popupAnchorEditRef = useRef(null);
-  const copyForwardWrapRef = useRef(null);
 
   async function loadAll() {
     setError(null);
@@ -80,18 +79,8 @@ export default function RotaPage() {
     setActivePopup(null);
     popupAnchorEditRef.current = null;
     setPopupFixedPos(null);
-    setCopyForwardMenuOpen(false);
+    setCopyForwardFreq("");
   }, [startISO, endISO]);
-
-  useEffect(() => {
-    if (!copyForwardMenuOpen) return;
-    function onDocMouseDown(ev) {
-      if (copyForwardWrapRef.current?.contains(ev.target)) return;
-      setCopyForwardMenuOpen(false);
-    }
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [copyForwardMenuOpen]);
 
   useEffect(() => {
     if (!activePopup) {
@@ -319,7 +308,6 @@ export default function RotaPage() {
 
   async function runCopyForward(mode) {
     console.log("[copy-forward] RotaPage invoking copy", { mode });
-    setCopyForwardMenuOpen(false);
     setCopyForwardBusy(true);
     setError(null);
     try {
@@ -343,6 +331,7 @@ export default function RotaPage() {
       });
       setSelectedReceptionistByBlock((prev) => ({ ...prev, ...receptionist }));
       setAssignedAssistantBySession((prev) => ({ ...prev, ...assistants }));
+      setCopyForwardFreq("");
       console.log("[copy-forward] RotaPage setState dispatched");
     } catch (e) {
       console.warn("[copy-forward] error", e);
@@ -366,39 +355,21 @@ export default function RotaPage() {
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
             {startISO} → {endISO}
           </span>
-          <div ref={copyForwardWrapRef} className="rota-copy-forward-wrap" data-copy-forward="true">
-            <button
-              type="button"
-              className="secondary rota-copy-forward-btn"
+          <div>
+            <label>Copy this week forward</label>
+            <select
+              value={copyForwardFreq}
               disabled={copyForwardBusy}
-              onClick={(e) => {
-                e.stopPropagation();
-                setCopyForwardMenuOpen((o) => !o);
+              onChange={(e) => {
+                const v = e.target.value;
+                setCopyForwardFreq(v);
+                if (v === "weekly" || v === "biweekly") void runCopyForward(v);
               }}
             >
-              Copy this week forward
-            </button>
-            {copyForwardMenuOpen && (
-              <div className="rota-copy-forward-panel" role="menu">
-                <div className="rota-copy-forward-panel-title meta">Apply to future matching weeks</div>
-                <button
-                  type="button"
-                  className="rota-copy-forward-option"
-                  disabled={copyForwardBusy}
-                  onClick={() => void runCopyForward("weekly")}
-                >
-                  Every week
-                </button>
-                <button
-                  type="button"
-                  className="rota-copy-forward-option"
-                  disabled={copyForwardBusy}
-                  onClick={() => void runCopyForward("biweekly")}
-                >
-                  Every other week
-                </button>
-              </div>
-            )}
+              <option value="">Choose…</option>
+              <option value="weekly">Every week</option>
+              <option value="biweekly">Every other week</option>
+            </select>
           </div>
           {copyForwardBusy && (
             <span className="meta" style={{ fontSize: "0.85rem" }}>
