@@ -226,7 +226,7 @@ export default function WeekShiftsPage() {
       {notice && <div className="notice-banner">{notice}</div>}
 
       <section className="card">
-        <h2>Define sessions for a week (TEST)</h2>
+        <h2>Define sessions for a week</h2>
         <p style={{ margin: "0 0 0.75rem", fontSize: "0.9rem", color: "var(--muted)" }}>
           Each row is a session (clinic, date, room, doctor, times). The same clinic can run multiple sessions the same
           day when room or doctor differs. Doctor is schedule metadata only — the rota does not assign clinical staff to
