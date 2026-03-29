@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { computeClinicDaySummary, formatRequiredCapacity } from "../clinicDay.js";
+import { computeCopyForwardAssignments } from "../rotaCopyForward.js";
 import { generateReceptionistCombinations } from "../receptionistCombinations.js";
 import { eligibleAssistantsForSession, eligibleReceptionistsForBlock } from "../rotaEligibility.js";
 import { toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
@@ -53,8 +54,11 @@ export default function RotaPage() {
   const [assignedAssistantBySession, setAssignedAssistantBySession] = useState({});
   const [activePopup, setActivePopup] = useState(null);
   const [popupFixedPos, setPopupFixedPos] = useState(null);
+  const [copyForwardBusy, setCopyForwardBusy] = useState(false);
+  const [copyForwardMenuOpen, setCopyForwardMenuOpen] = useState(false);
   const popupRef = useRef(null);
   const popupAnchorEditRef = useRef(null);
+  const copyForwardWrapRef = useRef(null);
 
   async function loadAll() {
     setError(null);
@@ -76,7 +80,18 @@ export default function RotaPage() {
     setActivePopup(null);
     popupAnchorEditRef.current = null;
     setPopupFixedPos(null);
+    setCopyForwardMenuOpen(false);
   }, [startISO, endISO]);
+
+  useEffect(() => {
+    if (!copyForwardMenuOpen) return;
+    function onDocMouseDown(ev) {
+      if (copyForwardWrapRef.current?.contains(ev.target)) return;
+      setCopyForwardMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [copyForwardMenuOpen]);
 
   useEffect(() => {
     if (!activePopup) {
@@ -302,6 +317,41 @@ export default function RotaPage() {
     });
   }
 
+  async function runCopyForward(mode) {
+    console.log("[copy-forward] RotaPage invoking copy", { mode });
+    setCopyForwardMenuOpen(false);
+    setCopyForwardBusy(true);
+    setError(null);
+    try {
+      const { receptionist, assistants } = await computeCopyForwardAssignments({
+        api,
+        staff,
+        sourceStartISO: startISO,
+        sourceEndISO: endISO,
+        sourceDays: days,
+        sourceByDateAndClinic: byDateAndClinic,
+        selectedReceptionistByBlock,
+        assignedAssistantBySession,
+        getShiftAssignedAssistantId: getAssignedAssistantId,
+        mode,
+      });
+      const rxKeys = Object.keys(receptionist);
+      const asKeys = Object.keys(assistants).map(Number);
+      console.log("[copy-forward] RotaPage merging state", {
+        receptionistKeys: rxKeys.length,
+        assistantSessionIds: asKeys.length,
+      });
+      setSelectedReceptionistByBlock((prev) => ({ ...prev, ...receptionist }));
+      setAssignedAssistantBySession((prev) => ({ ...prev, ...assistants }));
+      console.log("[copy-forward] RotaPage setState dispatched");
+    } catch (e) {
+      console.warn("[copy-forward] error", e);
+      setError(e.message);
+    } finally {
+      setCopyForwardBusy(false);
+    }
+  }
+
   return (
     <div>
       {error && <div className="error-banner">{error}</div>}
@@ -316,6 +366,45 @@ export default function RotaPage() {
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
             {startISO} → {endISO}
           </span>
+          <div ref={copyForwardWrapRef} className="rota-copy-forward-wrap" data-copy-forward="true">
+            <button
+              type="button"
+              className="secondary rota-copy-forward-btn"
+              disabled={copyForwardBusy}
+              onClick={(e) => {
+                e.stopPropagation();
+                setCopyForwardMenuOpen((o) => !o);
+              }}
+            >
+              Copy this week forward
+            </button>
+            {copyForwardMenuOpen && (
+              <div className="rota-copy-forward-panel" role="menu">
+                <div className="rota-copy-forward-panel-title meta">Apply to future matching weeks</div>
+                <button
+                  type="button"
+                  className="rota-copy-forward-option"
+                  disabled={copyForwardBusy}
+                  onClick={() => void runCopyForward("weekly")}
+                >
+                  Every week
+                </button>
+                <button
+                  type="button"
+                  className="rota-copy-forward-option"
+                  disabled={copyForwardBusy}
+                  onClick={() => void runCopyForward("biweekly")}
+                >
+                  Every other week
+                </button>
+              </div>
+            )}
+          </div>
+          {copyForwardBusy && (
+            <span className="meta" style={{ fontSize: "0.85rem" }}>
+              Copying…
+            </span>
+          )}
         </div>
 
         <div className="rota-grid-wrap">
