@@ -47,6 +47,20 @@ function receptionistComboIsCurrentlyValid(selectedComboLabel, combos) {
   return combos.some((c) => c.label === selectedComboLabel);
 }
 
+/** UI slot state for rota display; uses final filtered combo / eligible lists only. */
+function receptionistAssignmentDisplayState(selectedComboLabel, combos, requiredCapacity) {
+  if (selectedComboLabel) return "assigned";
+  if (combos.length > 0) return "unassigned";
+  if (requiredCapacity <= 0) return "unassigned";
+  return "gap";
+}
+
+function assistantAssignmentDisplayState(assignedId, eligibleAssistants) {
+  if (assignedId) return "assigned";
+  if (eligibleAssistants.length > 0) return "unassigned";
+  return "gap";
+}
+
 export default function RotaPage() {
   const today = toISODate(new Date());
   const [weekAnchor, setWeekAnchor] = useState(today);
@@ -384,6 +398,44 @@ export default function RotaPage() {
     }
   }
 
+  const weeklyGapCount = useMemo(() => {
+    let n = 0;
+    for (const clinicName of clinics) {
+      for (const iso of days) {
+        const sessions = byDateAndClinic[iso]?.get(clinicName) ?? [];
+        if (sessions.length === 0) continue;
+
+        const key = blockKeyFor(iso, clinicName);
+        const { summary, combos } = combinationCache.get(key) ?? {
+          summary: computeClinicDaySummary([]),
+          combos: [],
+        };
+        const selectedComboLabel = selectedReceptionistByBlock[key] ?? null;
+        const receptionistState = receptionistAssignmentDisplayState(
+          selectedComboLabel,
+          combos,
+          summary.required_capacity
+        );
+        if (receptionistState === "gap") n++;
+
+        for (const s of sessions) {
+          const assignedId = getAssignedAssistantId(s);
+          const eligibleForSession = assistantEligibilityCache.get(s.id) ?? [];
+          const assistantState = assistantAssignmentDisplayState(assignedId, eligibleForSession);
+          if (assistantState === "gap") n++;
+        }
+      }
+    }
+    return n;
+  }, [
+    clinics,
+    days,
+    byDateAndClinic,
+    combinationCache,
+    assistantEligibilityCache,
+    selectedReceptionistByBlock,
+  ]);
+
   return (
     <div>
       {error && <div className="error-banner">{error}</div>}
@@ -397,6 +449,15 @@ export default function RotaPage() {
           </label>
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
             {startISO} → {endISO}
+          </span>
+          <span
+            style={{
+              fontSize: "0.9rem",
+              color: weeklyGapCount > 0 ? "#dc2626" : "var(--muted)",
+              fontWeight: weeklyGapCount > 0 ? 650 : 500,
+            }}
+          >
+            {weeklyGapCount} gap{weeklyGapCount === 1 ? "" : "s"} this week
           </span>
           <div>
             <label>Copy this week forward</label>
@@ -446,6 +507,11 @@ export default function RotaPage() {
                   const selectedComboLabel = selectedReceptionistByBlock[key] ?? null;
                   const receptionistInvalid =
                     Boolean(selectedComboLabel) && !receptionistComboIsCurrentlyValid(selectedComboLabel, combos);
+                  const receptionistDisplayState = receptionistAssignmentDisplayState(
+                    selectedComboLabel,
+                    combos,
+                    summary.required_capacity
+                  );
 
                   return (
                     <div key={`${iso}\0${clinicName}`} className="rota-grid-cell">
@@ -458,11 +524,13 @@ export default function RotaPage() {
                           </div>
                           <div className="rota-cell-line rota-cell-receptionist">
                             <span className="rota-label">Receptionist:</span>{" "}
-                            {selectedComboLabel ? (
+                            {receptionistDisplayState === "assigned" ? (
                               <span className={receptionistInvalid ? "rota-assignment-invalid" : undefined}>
                                 {selectedComboLabel}
                                 {receptionistInvalid ? " (invalid)" : ""}
                               </span>
+                            ) : receptionistDisplayState === "gap" ? (
+                              <span className="rota-assignment-gap">Unassigned (GAP)</span>
                             ) : (
                               "Unassigned"
                             )}{" "}
@@ -490,6 +558,10 @@ export default function RotaPage() {
                               const assistantInvalid =
                                 Boolean(assignedId) &&
                                 !eligibleForSession.some((a) => Number(a.id) === Number(assignedId));
+                              const assistantDisplayState = assistantAssignmentDisplayState(
+                                assignedId,
+                                eligibleForSession
+                              );
                               const roomBit = String(s.room || "").trim();
                               return (
                                 <div key={s.id} className="rota-session-block">
@@ -502,11 +574,13 @@ export default function RotaPage() {
                                   </div>
                                   <div className="rota-cell-line rota-session-indent">
                                     Assistant:{" "}
-                                    {assignedId ? (
+                                    {assistantDisplayState === "assigned" ? (
                                       <span className={assistantInvalid ? "rota-assignment-invalid" : undefined}>
                                         {assigned?.name ?? `Staff #${assignedId}`}
                                         {assistantInvalid ? " (unavailable)" : ""}
                                       </span>
+                                    ) : assistantDisplayState === "gap" ? (
+                                      <span className="rota-assignment-gap">Unassigned (GAP)</span>
                                     ) : (
                                       "Unassigned"
                                     )}{" "}

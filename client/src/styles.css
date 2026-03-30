@@ -599,6 +599,12 @@ button.rota-edit-link:focus-visible {
   font-weight: 600;
 }
 
+/* No assignable options after constraints (entire label red) */
+.rota-assignment-gap {
+  color: #dc2626;
+  font-weight: 600;
+}
+
 /* —— Date availability (per-staff calendar overrides) —— */
 .date-availability-intro {
   margin: 0 0 1rem;
