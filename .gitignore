@@ -4,3 +4,6 @@ dist/
 *.sqlite-journal
 .env
 .DS_Store
+
+*.sqlite-wal
+*.sqlite-shm
