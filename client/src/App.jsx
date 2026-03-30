@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import StaffPage from "./pages/StaffPage.jsx";
 import WeekShiftsPage from "./pages/WeekShiftsPage.jsx";
 import RotaPage from "./pages/RotaPage.jsx";
+import DateAvailabilityPage from "./pages/DateAvailabilityPage.jsx";
 
 export default function App() {
   return (
@@ -18,6 +19,9 @@ export default function App() {
           <NavLink to="/rota" className={({ isActive }) => (isActive ? "active" : "")}>
             Rota
           </NavLink>
+          <NavLink to="/date-availability" className={({ isActive }) => (isActive ? "active" : "")}>
+            Date availability
+          </NavLink>
         </nav>
       </header>
       <main className="main">
@@ -25,6 +29,7 @@ export default function App() {
           <Route path="/" element={<StaffPage />} />
           <Route path="/shifts" element={<WeekShiftsPage />} />
           <Route path="/rota" element={<RotaPage />} />
+          <Route path="/date-availability" element={<DateAvailabilityPage />} />
         </Routes>
       </main>
     </div>

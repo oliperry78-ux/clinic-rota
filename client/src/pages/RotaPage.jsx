@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { computeClinicDaySummary, formatRequiredCapacity } from "../clinicDay.js";
 import { computeCopyForwardAssignments } from "../rotaCopyForward.js";
+import { mergeReceptionistStateForDateRange, receptionistSelectionMapFromApiPayload } from "../rotaPersistence.js";
 import { generateReceptionistCombinations } from "../receptionistCombinations.js";
 import { eligibleAssistantsForSession, eligibleReceptionistsForBlock } from "../rotaEligibility.js";
 import { toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
@@ -41,6 +42,11 @@ function assistantEditAnchorId(iso, clinicName, sessionId, sessionIndex) {
   return `rota-assistant-edit-${enc(iso)}_${enc(clinicName)}_${enc(sessionId)}_row${sessionIndex}`;
 }
 
+function receptionistComboIsCurrentlyValid(selectedComboLabel, combos) {
+  if (!selectedComboLabel) return true;
+  return combos.some((c) => c.label === selectedComboLabel);
+}
+
 export default function RotaPage() {
   const today = toISODate(new Date());
   const [weekAnchor, setWeekAnchor] = useState(today);
@@ -48,10 +54,10 @@ export default function RotaPage() {
   const days = weekDaysISO(startISO);
 
   const [staff, setStaff] = useState([]);
+  const [dateOverrides, setDateOverrides] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [error, setError] = useState(null);
   const [selectedReceptionistByBlock, setSelectedReceptionistByBlock] = useState({});
-  const [assignedAssistantBySession, setAssignedAssistantBySession] = useState({});
   const [activePopup, setActivePopup] = useState(null);
   const [popupFixedPos, setPopupFixedPos] = useState(null);
   const [copyForwardBusy, setCopyForwardBusy] = useState(false);
@@ -62,9 +68,17 @@ export default function RotaPage() {
   async function loadAll() {
     setError(null);
     try {
-      const [sList, shList] = await Promise.all([api.getStaff(), api.getShifts(startISO, endISO)]);
+      const [sList, shList, ov, rxPayload] = await Promise.all([
+        api.getStaff(),
+        api.getShifts(startISO, endISO),
+        api.getDateOverrides(),
+        api.getClinicDayReceptionistSlots(startISO, endISO),
+      ]);
       setStaff(sList);
+      setDateOverrides(ov?.dateOverrides ?? []);
       setShifts(shList);
+      const loadedRx = receptionistSelectionMapFromApiPayload(rxPayload, sList);
+      setSelectedReceptionistByBlock((prev) => mergeReceptionistStateForDateRange(prev, loadedRx, startISO, endISO));
     } catch (e) {
       setError(e.message);
     }
@@ -193,7 +207,8 @@ export default function RotaPage() {
           clinicName,
           iso,
           summary.required_start,
-          summary.required_end
+          summary.required_end,
+          dateOverrides
         ).map((p) => ({
           id: p.id,
           name: p.name,
@@ -241,69 +256,86 @@ export default function RotaPage() {
 
       const eligible = block.baseEligible.filter((p) => !blockedStaffIds.has(Number(p.id)));
       const recomputedCombos = generateReceptionistCombinations(eligible, block.requiredCapacity);
-      const selectedCombo = selectedByBlock.get(block.key);
-      const combos = selectedCombo
-        ? [selectedCombo, ...recomputedCombos.filter((c) => c.label !== selectedCombo.label)]
-        : recomputedCombos;
+      const combos = recomputedCombos;
 
       cache.set(block.key, { eligible, combos, summary: block.summary });
     }
 
     return cache;
-  }, [staff, days, byDateAndClinic, selectedReceptionistByBlock]);
+  }, [staff, days, byDateAndClinic, selectedReceptionistByBlock, dateOverrides]);
 
-  const shiftsWithLocalAssignments = useMemo(
-    () =>
-      shifts.map((s) => ({
-        ...s,
-        assigned_staff_id:
-          assignedAssistantBySession[s.id] !== undefined ? assignedAssistantBySession[s.id] : s.assigned_staff_id,
-      })),
-    [shifts, assignedAssistantBySession]
-  );
+  const shiftsWithLocalAssignments = shifts;
 
   const assistantEligibilityCache = useMemo(() => {
     const cache = new Map();
     for (const s of shiftsWithLocalAssignments) {
-      const eligible = eligibleAssistantsForSession(staff, shiftsWithLocalAssignments, s);
+      const eligible = eligibleAssistantsForSession(staff, shiftsWithLocalAssignments, s, dateOverrides);
       cache.set(s.id, eligible);
     }
     return cache;
-  }, [staff, shiftsWithLocalAssignments]);
+  }, [staff, shiftsWithLocalAssignments, dateOverrides]);
 
   function blockKeyFor(isoDate, clinicName) {
     return `${isoDate}\0${clinicName}`;
   }
 
   function getAssignedAssistantId(session) {
-    if (assignedAssistantBySession[session.id] !== undefined) return assignedAssistantBySession[session.id];
     return session.assigned_staff_id ?? null;
   }
 
-  function selectReceptionistCombo(isoDate, clinicName, comboLabel) {
+  async function selectReceptionistCombo(isoDate, clinicName, combo) {
     const key = blockKeyFor(isoDate, clinicName);
-    setSelectedReceptionistByBlock((prev) => ({ ...prev, [key]: comboLabel }));
+    const staffIds = combo.contributions.map((c) => Number(c.staffId));
+    setError(null);
+    try {
+      await api.putClinicDayReceptionistSlots({
+        shift_date: isoDate,
+        clinic: clinicName,
+        staffIds,
+      });
+      setSelectedReceptionistByBlock((prev) => ({ ...prev, [key]: combo.label }));
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
-  function clearReceptionistCombo(isoDate, clinicName) {
+  async function clearReceptionistCombo(isoDate, clinicName) {
     const key = blockKeyFor(isoDate, clinicName);
-    setSelectedReceptionistByBlock((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
-    });
+    setError(null);
+    try {
+      await api.putClinicDayReceptionistSlots({
+        shift_date: isoDate,
+        clinic: clinicName,
+        staffIds: [],
+      });
+      setSelectedReceptionistByBlock((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
-  function assignAssistant(sessionId, staffId) {
-    setAssignedAssistantBySession((prev) => ({ ...prev, [sessionId]: staffId }));
+  async function assignAssistant(sessionId, staffId) {
+    setError(null);
+    try {
+      await api.assignShiftStaff(sessionId, staffId);
+      setShifts((prev) => prev.map((s) => (s.id === sessionId ? { ...s, assigned_staff_id: staffId } : s)));
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
-  function unassignAssistant(sessionId) {
-    setAssignedAssistantBySession((prev) => {
-      const next = { ...prev };
-      delete next[sessionId];
-      return next;
-    });
+  async function unassignAssistant(sessionId) {
+    setError(null);
+    try {
+      await api.assignShiftStaff(sessionId, null);
+      setShifts((prev) => prev.map((s) => (s.id === sessionId ? { ...s, assigned_staff_id: null } : s)));
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
   async function runCopyForward(mode) {
@@ -311,7 +343,7 @@ export default function RotaPage() {
     setCopyForwardBusy(true);
     setError(null);
     try {
-      const { receptionist, assistants } = await computeCopyForwardAssignments({
+      const { receptionist, receptionistSlots, assistants } = await computeCopyForwardAssignments({
         api,
         staff,
         sourceStartISO: startISO,
@@ -319,9 +351,9 @@ export default function RotaPage() {
         sourceDays: days,
         sourceByDateAndClinic: byDateAndClinic,
         selectedReceptionistByBlock,
-        assignedAssistantBySession,
         getShiftAssignedAssistantId: getAssignedAssistantId,
         mode,
+        dateOverrides,
       });
       const rxKeys = Object.keys(receptionist);
       const asKeys = Object.keys(assistants).map(Number);
@@ -329,8 +361,19 @@ export default function RotaPage() {
         receptionistKeys: rxKeys.length,
         assistantSessionIds: asKeys.length,
       });
+
+      const rxPersist = Object.entries(receptionistSlots).map(([blockKey, staffIds]) => {
+        const i = blockKey.indexOf("\0");
+        const shift_date = blockKey.slice(0, i);
+        const clinic = blockKey.slice(i + 1);
+        return api.putClinicDayReceptionistSlots({ shift_date, clinic, staffIds });
+      });
+      const asPersist = Object.entries(assistants).map(([sid, aid]) => api.assignShiftStaff(Number(sid), aid));
+      await Promise.all([...rxPersist, ...asPersist]);
+
       setSelectedReceptionistByBlock((prev) => ({ ...prev, ...receptionist }));
-      setAssignedAssistantBySession((prev) => ({ ...prev, ...assistants }));
+      const shList = await api.getShifts(startISO, endISO);
+      setShifts(shList);
       setCopyForwardFreq("");
       console.log("[copy-forward] RotaPage setState dispatched");
     } catch (e) {
@@ -401,6 +444,8 @@ export default function RotaPage() {
                     combos: [],
                   };
                   const selectedComboLabel = selectedReceptionistByBlock[key] ?? null;
+                  const receptionistInvalid =
+                    Boolean(selectedComboLabel) && !receptionistComboIsCurrentlyValid(selectedComboLabel, combos);
 
                   return (
                     <div key={`${iso}\0${clinicName}`} className="rota-grid-cell">
@@ -413,7 +458,14 @@ export default function RotaPage() {
                           </div>
                           <div className="rota-cell-line rota-cell-receptionist">
                             <span className="rota-label">Receptionist:</span>{" "}
-                            {selectedComboLabel ? selectedComboLabel : "Unassigned"}{" "}
+                            {selectedComboLabel ? (
+                              <span className={receptionistInvalid ? "rota-assignment-invalid" : undefined}>
+                                {selectedComboLabel}
+                                {receptionistInvalid ? " (invalid)" : ""}
+                              </span>
+                            ) : (
+                              "Unassigned"
+                            )}{" "}
                             <button
                               type="button"
                               className="rota-edit-link"
@@ -434,6 +486,10 @@ export default function RotaPage() {
                             {sessions.map((s, sessIdx) => {
                               const assignedId = getAssignedAssistantId(s);
                               const assigned = assignedId ? staffById.get(Number(assignedId)) : null;
+                              const eligibleForSession = assistantEligibilityCache.get(s.id) ?? [];
+                              const assistantInvalid =
+                                Boolean(assignedId) &&
+                                !eligibleForSession.some((a) => Number(a.id) === Number(assignedId));
                               const roomBit = String(s.room || "").trim();
                               return (
                                 <div key={s.id} className="rota-session-block">
@@ -445,7 +501,15 @@ export default function RotaPage() {
                                     Doctor: {String(s.doctor || "").trim() || "—"}
                                   </div>
                                   <div className="rota-cell-line rota-session-indent">
-                                    Assistant: {assigned?.name ?? "Unassigned"}{" "}
+                                    Assistant:{" "}
+                                    {assignedId ? (
+                                      <span className={assistantInvalid ? "rota-assignment-invalid" : undefined}>
+                                        {assigned?.name ?? `Staff #${assignedId}`}
+                                        {assistantInvalid ? " (unavailable)" : ""}
+                                      </span>
+                                    ) : (
+                                      "Unassigned"
+                                    )}{" "}
                                     <button
                                       type="button"
                                       className="rota-edit-link"
@@ -495,6 +559,8 @@ export default function RotaPage() {
                 combos: [],
               };
               const selectedComboLabel = selectedReceptionistByBlock[rk] ?? null;
+              const receptionistInvalid =
+                Boolean(selectedComboLabel) && !receptionistComboIsCurrentlyValid(selectedComboLabel, combos);
               const iso = activePopup.iso;
               const clinicName = activePopup.clinicName;
               return (
@@ -516,6 +582,16 @@ export default function RotaPage() {
                   <div className="meta" style={{ fontSize: "0.75rem", marginBottom: "0.35rem" }}>
                     Required capacity: {formatRequiredCapacity(summary.required_capacity)}
                   </div>
+                  {receptionistInvalid && (
+                    <div className="rota-popup-row rota-assignment-invalid" style={{ marginBottom: "0.35rem" }}>
+                      <span>
+                        {selectedComboLabel} (invalid)
+                      </span>
+                      <button type="button" className="secondary" onClick={() => void clearReceptionistCombo(iso, clinicName)}>
+                        Unassign
+                      </button>
+                    </div>
+                  )}
                   {summary.required_capacity <= 0 ? (
                     <p className="meta" style={{ margin: 0, fontSize: "0.75rem" }}>
                       No capacity required.
@@ -552,13 +628,13 @@ export default function RotaPage() {
                                         <button
                                           type="button"
                                           className="secondary"
-                                          onClick={() => clearReceptionistCombo(iso, clinicName)}
+                                          onClick={() => void clearReceptionistCombo(iso, clinicName)}
                                         >
                                           Unassign
                                         </button>
                                       </>
                                     ) : (
-                                      <button type="button" onClick={() => selectReceptionistCombo(iso, clinicName, c.label)}>
+                                      <button type="button" onClick={() => void selectReceptionistCombo(iso, clinicName, c)}>
                                         Assign
                                       </button>
                                     )}
@@ -596,62 +672,53 @@ export default function RotaPage() {
                   const eligibleAssistants = assistantEligibilityCache.get(s.id) ?? [];
                   const assignedAssistantId = getAssignedAssistantId(s);
                   const assignedAssistant = assignedAssistantId ? staffById.get(Number(assignedAssistantId)) : null;
-                  const assignedIsEligible = eligibleAssistants.some((a) => Number(a.id) === Number(assignedAssistantId));
-                  if (eligibleAssistants.length === 0) {
-                    return (
-                      <>
-                        {assignedAssistant && (
-                          <div className="rota-popup-row rota-assigned-row">
-                            <span>{assignedAssistant.name}</span>
-                            <span className="rota-assigned-chip">Assigned</span>
-                            <button type="button" className="secondary" onClick={() => unassignAssistant(s.id)}>
-                              Unassign
-                            </button>
-                          </div>
-                        )}
-                        <p className="meta" style={{ margin: 0, fontSize: "0.75rem" }}>
-                          None match current constraints.
-                        </p>
-                      </>
-                    );
-                  }
+                  const assignedIsEligible =
+                    Boolean(assignedAssistantId) &&
+                    eligibleAssistants.some((a) => Number(a.id) === Number(assignedAssistantId));
                   return (
                     <div>
                       {assignedAssistant && !assignedIsEligible && (
-                        <div className="rota-popup-row rota-assigned-row">
-                          <span>{assignedAssistant.name}</span>
-                          <span className="rota-assigned-chip">Assigned</span>
-                          <button type="button" className="secondary" onClick={() => unassignAssistant(s.id)}>
+                        <div className="rota-popup-row rota-assignment-invalid" style={{ marginBottom: "0.35rem" }}>
+                          <span>
+                            {assignedAssistant.name} (unavailable)
+                          </span>
+                          <button type="button" className="secondary" onClick={() => void unassignAssistant(s.id)}>
                             Unassign
                           </button>
                         </div>
                       )}
-                      <ul className="rota-popup-list">
-                        {eligibleAssistants.map((a) => (
-                          <li
-                            key={a.id}
-                            className={
-                              Number(assignedAssistantId) === Number(a.id)
-                                ? "rota-popup-row rota-assigned-row"
-                                : "rota-popup-row"
-                            }
-                          >
-                            <span>{a.name}</span>
-                            {Number(assignedAssistantId) === Number(a.id) ? (
-                              <>
-                                <span className="rota-assigned-chip">Assigned</span>
-                                <button type="button" className="secondary" onClick={() => unassignAssistant(s.id)}>
-                                  Unassign
+                      {eligibleAssistants.length === 0 ? (
+                        <p className="meta" style={{ margin: 0, fontSize: "0.75rem" }}>
+                          None match current constraints.
+                        </p>
+                      ) : (
+                        <ul className="rota-popup-list">
+                          {eligibleAssistants.map((a) => (
+                            <li
+                              key={a.id}
+                              className={
+                                Number(assignedAssistantId) === Number(a.id)
+                                  ? "rota-popup-row rota-assigned-row"
+                                  : "rota-popup-row"
+                              }
+                            >
+                              <span>{a.name}</span>
+                              {Number(assignedAssistantId) === Number(a.id) ? (
+                                <>
+                                  <span className="rota-assigned-chip">Assigned</span>
+                                  <button type="button" className="secondary" onClick={() => void unassignAssistant(s.id)}>
+                                    Unassign
+                                  </button>
+                                </>
+                              ) : (
+                                <button type="button" onClick={() => void assignAssistant(s.id, a.id)}>
+                                  Assign
                                 </button>
-                              </>
-                            ) : (
-                              <button type="button" onClick={() => assignAssistant(s.id, a.id)}>
-                                Assign
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   );
                 })()}

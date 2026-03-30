@@ -66,6 +66,28 @@ export function isWithinAvailabilityForIsoDate(availability, isoDate, dayOfWeek,
   return isWithinAvailability(slots, dayOfWeek, shiftStart, shiftEnd);
 }
 
+/**
+ * Per-date override wins when present; otherwise weekly/biweekly bands apply.
+ * Override `isAvailable: true` means available for scheduling that date (no time-band check).
+ */
+function dateOverrideAvailability(staffId, isoDate, dateOverrides) {
+  if (!Array.isArray(dateOverrides) || dateOverrides.length === 0) return undefined;
+  const sid = Number(staffId);
+  const d = String(isoDate);
+  for (const o of dateOverrides) {
+    if (Number(o.staffId) === sid && String(o.date) === d) {
+      return Boolean(o.isAvailable);
+    }
+  }
+  return undefined;
+}
+
+export function isStaffAvailableForShiftWindow(staff, isoDate, dayOfWeek, windowStart, windowEnd, dateOverrides) {
+  const over = dateOverrideAvailability(staff.id, isoDate, dateOverrides);
+  if (over !== undefined) return over;
+  return isWithinAvailabilityForIsoDate(staff.availability, isoDate, dayOfWeek, windowStart, windowEnd);
+}
+
 export function staffAllowedAtClinic(staff, clinicTrim) {
   const ac = staff.allowed_clinics;
   if (!ac || ac.all) return true;
@@ -88,13 +110,20 @@ function bufferedSessionWindow(startTime, endTime) {
  * `requiredStart` / `requiredEnd` are the buffered window (e.g. clinic ± 30 minutes); eligibility requires
  * one availability band that fully contains that interval (no partial overlap).
  */
-export function eligibleReceptionistsForBlock(staffList, clinicTrim, isoDate, requiredStart, requiredEnd) {
+export function eligibleReceptionistsForBlock(
+  staffList,
+  clinicTrim,
+  isoDate,
+  requiredStart,
+  requiredEnd,
+  dateOverrides = []
+) {
   if (!requiredStart || !requiredEnd) return [];
   const dow = dateStringToDayOfWeek(isoDate);
   return staffList.filter((p) => {
     if (String(p.role || "").trim().toLowerCase() !== "receptionist") return false;
     if (!staffAllowedAtClinic(p, clinicTrim)) return false;
-    return isWithinAvailabilityForIsoDate(p.availability, isoDate, dow, requiredStart, requiredEnd);
+    return isStaffAvailableForShiftWindow(p, isoDate, dow, requiredStart, requiredEnd, dateOverrides);
   });
 }
 
@@ -103,7 +132,7 @@ export function eligibleReceptionistsForBlock(staffList, clinicTrim, isoDate, re
  * role + clinic allow-list + availability for buffered session window + no overlap with other
  * buffered sessions this doctors assistant is already assigned to.
  */
-export function eligibleAssistantsForSession(staffList, allShifts, targetShift) {
+export function eligibleAssistantsForSession(staffList, allShifts, targetShift, dateOverrides = []) {
   if (!targetShift?.shift_date || !targetShift?.start_time || !targetShift?.end_time) return [];
   const targetWin = bufferedSessionWindow(targetShift.start_time, targetShift.end_time);
   if (!targetWin) return [];
@@ -117,10 +146,10 @@ export function eligibleAssistantsForSession(staffList, allShifts, targetShift) 
     if (role !== "doctors assistant" && role !== "assistant") return false;
     if (!staffAllowedAtClinic(p, clinicTrim)) return false;
 
-    // Availability must cover full buffered session window.
+    // Availability must cover full buffered session window (unless a date override applies).
     const requiredStart = `${String(Math.floor(targetWin.startMin / 60)).padStart(2, "0")}:${String(targetWin.startMin % 60).padStart(2, "0")}`;
     const requiredEnd = `${String(Math.floor(targetWin.endMin / 60)).padStart(2, "0")}:${String(targetWin.endMin % 60).padStart(2, "0")}`;
-    if (!isWithinAvailabilityForIsoDate(p.availability, targetShift.shift_date, dow, requiredStart, requiredEnd))
+    if (!isStaffAvailableForShiftWindow(p, targetShift.shift_date, dow, requiredStart, requiredEnd, dateOverrides))
       return false;
 
     // Block if already assigned to another overlapping buffered session.

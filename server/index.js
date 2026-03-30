@@ -127,6 +127,7 @@ app.delete("/api/staff/:id", (req, res) => {
   if (!Number.isFinite(id)) {
     return res.status(400).json({ error: "invalid staff id" });
   }
+  db.prepare("DELETE FROM staff_date_override WHERE staff_id = ?").run(id);
   db.prepare("UPDATE shifts SET assigned_staff_id = NULL WHERE assigned_staff_id = ?").run(id);
   db.prepare("DELETE FROM clinic_day_receptionist_slots WHERE staff_id = ?").run(id);
   const info = db.prepare("DELETE FROM staff WHERE id = ?").run(id);
@@ -143,6 +144,63 @@ function normalizeStaffRow(row) {
     allowed_clinics: parseAllowedClinicsJson(allowed_clinics_json),
   };
 }
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+app.get("/api/date-overrides", (_req, res) => {
+  const rows = db.prepare("SELECT staff_id, shift_date, is_available FROM staff_date_override").all();
+  res.json({
+    dateOverrides: rows.map((r) => ({
+      staffId: String(r.staff_id),
+      date: r.shift_date,
+      isAvailable: Boolean(r.is_available),
+    })),
+  });
+});
+
+/** Replace all date overrides for one staff member (calendar UI sends only isAvailable: true rows). */
+app.put("/api/staff/:id/date-overrides", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: "invalid staff id" });
+  }
+  const existing = db.prepare("SELECT id FROM staff WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "staff not found" });
+
+  const raw = req.body?.dateOverrides;
+  if (!Array.isArray(raw)) {
+    return res.status(400).json({ error: "dateOverrides array required" });
+  }
+
+  const byDate = new Map();
+  for (const o of raw) {
+    const date = String(o?.date ?? "").trim();
+    if (!ISO_DATE_RE.test(date)) continue;
+    byDate.set(date, o?.isAvailable === false ? 0 : 1);
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM staff_date_override WHERE staff_id = ?").run(id);
+    const ins = db.prepare(
+      "INSERT INTO staff_date_override (staff_id, shift_date, is_available) VALUES (?, ?, ?)"
+    );
+    for (const [shift_date, is_available] of byDate) {
+      ins.run(id, shift_date, is_available);
+    }
+  });
+  tx();
+
+  const rows = db
+    .prepare("SELECT staff_id, shift_date, is_available FROM staff_date_override WHERE staff_id = ?")
+    .all(id);
+  res.json({
+    dateOverrides: rows.map((r) => ({
+      staffId: String(r.staff_id),
+      date: r.shift_date,
+      isAvailable: Boolean(r.is_available),
+    })),
+  });
+});
 
 // ---------- Shifts (sessions: schedule metadata; no session-level staffing in this engine) ----------
 
@@ -206,14 +264,86 @@ app.delete("/api/shifts/:id", (req, res) => {
   res.status(204).send();
 });
 
+app.get("/api/clinic-day-receptionist-slots", (req, res) => {
+  const { startDate, endDate } = req.query;
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: "startDate and endDate query params required" });
+  }
+  const rows = db
+    .prepare(
+      `SELECT shift_date, clinic, slot_index, staff_id
+       FROM clinic_day_receptionist_slots
+       WHERE shift_date >= ? AND shift_date <= ?
+       ORDER BY shift_date, clinic, slot_index`
+    )
+    .all(String(startDate), String(endDate));
+
+  const byBlock = new Map();
+  for (const r of rows) {
+    const key = `${r.shift_date}\0${r.clinic}`;
+    if (!byBlock.has(key)) {
+      byBlock.set(key, { shift_date: r.shift_date, clinic: r.clinic, slots: [] });
+    }
+    byBlock.get(key).slots.push({ slot_index: r.slot_index, staff_id: r.staff_id });
+  }
+  res.json({ blocks: [...byBlock.values()] });
+});
+
+app.put("/api/clinic-day-receptionist-slots", (req, res) => {
+  const shift_date = String(req.body?.shift_date ?? "").trim();
+  const clinic = String(req.body?.clinic ?? "").trim();
+  const staffIdsRaw = req.body?.staffIds;
+  if (!ISO_DATE_RE.test(shift_date)) {
+    return res.status(400).json({ error: "shift_date (YYYY-MM-DD) required" });
+  }
+  if (!Array.isArray(staffIdsRaw)) {
+    return res.status(400).json({ error: "staffIds array required" });
+  }
+
+  const staffIds = [];
+  for (const x of staffIdsRaw) {
+    if (x == null || x === "") continue;
+    const id = Number(x);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: "each staff id must be a positive number" });
+    }
+    staffIds.push(id);
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM clinic_day_receptionist_slots WHERE shift_date = ? AND clinic = ?").run(shift_date, clinic);
+    const ins = db.prepare(
+      `INSERT INTO clinic_day_receptionist_slots (shift_date, clinic, slot_index, staff_id)
+       VALUES (?, ?, ?, ?)`
+    );
+    staffIds.forEach((staffId, idx) => {
+      ins.run(shift_date, clinic, idx, staffId);
+    });
+  });
+  tx();
+  res.json({ ok: true });
+});
+
 app.patch("/api/shifts/:id/assign", (req, res) => {
   const shiftId = Number(req.params.id);
-  const row = db.prepare("SELECT id FROM shifts WHERE id = ?").get(shiftId);
-  if (!row) return res.status(404).json({ error: "shift not found" });
-  return res.status(400).json({
-    error:
-      "Session-level staff assignment is not used. Doctor appears as metadata only; receptionist coverage is combination-based on the Rota page.",
-  });
+  const existing = db.prepare("SELECT * FROM shifts WHERE id = ?").get(shiftId);
+  if (!existing) return res.status(404).json({ error: "shift not found" });
+
+  const raw = req.body?.assigned_staff_id;
+  let staffId = null;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) {
+      return res.status(400).json({ error: "assigned_staff_id must be null or a positive staff id" });
+    }
+    const st = db.prepare("SELECT id FROM staff WHERE id = ?").get(n);
+    if (!st) return res.status(400).json({ error: "staff not found" });
+    staffId = n;
+  }
+
+  db.prepare("UPDATE shifts SET assigned_staff_id = ? WHERE id = ?").run(staffId, shiftId);
+  const row = db.prepare("SELECT * FROM shifts WHERE id = ?").get(shiftId);
+  res.json(augmentShiftRow(row));
 });
 
 app.patch("/api/shifts/:id", (req, res) => {

@@ -25,4 +25,23 @@ export const api = {
   createShift: (body) => request("/api/shifts", { method: "POST", body: JSON.stringify(body) }),
   updateShift: (id, body) => request(`/api/shifts/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteShift: (id) => request(`/api/shifts/${id}`, { method: "DELETE" }),
+
+  getDateOverrides: () => request("/api/date-overrides"),
+  putStaffDateOverrides: (staffId, dateOverrides) =>
+    request(`/api/staff/${staffId}/date-overrides`, {
+      method: "PUT",
+      body: JSON.stringify({ dateOverrides }),
+    }),
+
+  getClinicDayReceptionistSlots: (startDate, endDate) =>
+    request(
+      `/api/clinic-day-receptionist-slots?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`
+    ),
+  putClinicDayReceptionistSlots: (body) =>
+    request("/api/clinic-day-receptionist-slots", { method: "PUT", body: JSON.stringify(body) }),
+  assignShiftStaff: (shiftId, assignedStaffId) =>
+    request(`/api/shifts/${shiftId}/assign`, {
+      method: "PATCH",
+      body: JSON.stringify({ assigned_staff_id: assignedStaffId }),
+    }),
 };

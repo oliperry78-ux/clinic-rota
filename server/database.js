@@ -9,6 +9,7 @@ const dbPath = path.join(__dirname, "rota.sqlite");
 export const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
 
 // --- Schema: staff + shifts (assignment stored on shift row for simplicity) ---
 
@@ -51,6 +52,14 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_cdr_date_clinic ON clinic_day_receptionist_slots(shift_date, clinic);
   CREATE INDEX IF NOT EXISTS idx_cdr_staff ON clinic_day_receptionist_slots(staff_id);
+
+  CREATE TABLE IF NOT EXISTS staff_date_override (
+    staff_id INTEGER NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+    shift_date TEXT NOT NULL,
+    is_available INTEGER NOT NULL,
+    PRIMARY KEY (staff_id, shift_date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_staff_date_override_date ON staff_date_override(shift_date);
 `);
 
 function migrateStaffColumns() {

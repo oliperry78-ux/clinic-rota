@@ -45,10 +45,33 @@ function blockKeyFor(isoDate, clinicName) {
   return `${isoDate}\0${clinicName}`;
 }
 
-function buildCombinationCacheForWeek(staff, days, byDateAndClinic, selectedReceptionistByBlock) {
+/** Recover staff ids from a combo label when the combo is no longer in the generated list (still persisted). */
+function parseReceptionistLabelToStaffIds(label, staffList) {
+  if (!label || !staffList?.length) return null;
+  const segments = String(label)
+    .split(" + ")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out = [];
+  for (const seg of segments) {
+    const m = seg.match(/^(.+)\s+\((\d+)\)\s*$/);
+    if (!m) return null;
+    const name = m[1].trim();
+    const cap = Math.max(1, parseInt(m[2], 10) || 1);
+    const candidates = staffList.filter(
+      (p) => String(p.name || "").trim() === name && Math.max(1, Math.floor(Number(p.capacity)) || 1) === cap
+    );
+    if (!candidates.length) return null;
+    out.push(Number(candidates[0].id));
+  }
+  return out.length ? out : null;
+}
+
+function buildCombinationCacheForWeek(staff, days, byDateAndClinic, selectedReceptionistByBlock, dateOverrides) {
   const blocks = [];
   const byKey = new Map();
   const cache = new Map();
+  const overrides = Array.isArray(dateOverrides) ? dateOverrides : [];
   for (const iso of days) {
     const clinicMap = byDateAndClinic[iso];
     if (!clinicMap) continue;
@@ -60,7 +83,8 @@ function buildCombinationCacheForWeek(staff, days, byDateAndClinic, selectedRece
         clinicName,
         iso,
         summary.required_start,
-        summary.required_end
+        summary.required_end,
+        overrides
       ).map((p) => ({
         id: p.id,
         name: p.name,
@@ -119,10 +143,10 @@ function buildCombinationCacheForWeek(staff, days, byDateAndClinic, selectedRece
   return cache;
 }
 
-function dayReceptionistSelectionsAllValid(staff, iso, byDateAndClinic, daySelections) {
+function dayReceptionistSelectionsAllValid(staff, iso, byDateAndClinic, daySelections, dateOverrides) {
   const clinicMap = byDateAndClinic[iso];
   if (!clinicMap) return Object.keys(daySelections).length === 0;
-  const cache = buildCombinationCacheForWeek(staff, [iso], { [iso]: clinicMap }, daySelections);
+  const cache = buildCombinationCacheForWeek(staff, [iso], { [iso]: clinicMap }, daySelections, dateOverrides);
   for (const [key, label] of Object.entries(daySelections)) {
     if (!key.startsWith(`${iso}\0`)) continue;
     const entry = cache.get(key);
@@ -164,7 +188,7 @@ function groupShiftsByDate(shifts) {
 /**
  * @param {object} params
  * @param {"weekly"|"biweekly"} params.mode
- * @returns {Promise<{ receptionist: Record<string,string>, assistants: Record<number,number> }>}
+ * @returns {Promise<{ receptionist: Record<string,string>, receptionistSlots: Record<string, number[]>, assistants: Record<number,number> }>}
  */
 export async function computeCopyForwardAssignments({
   api,
@@ -174,10 +198,10 @@ export async function computeCopyForwardAssignments({
   sourceDays,
   sourceByDateAndClinic,
   selectedReceptionistByBlock,
-  assignedAssistantBySession,
   getShiftAssignedAssistantId,
   mode,
   horizonDays = 800,
+  dateOverrides = [],
 }) {
   const futureStart = addDaysToISO(sourceEndISO, 1);
   const futureEnd = addDaysToISO(sourceEndISO, horizonDays);
@@ -185,7 +209,16 @@ export async function computeCopyForwardAssignments({
   const allFuture = await api.getShifts(futureStart, futureEnd);
   console.log("[copy-forward] future shifts loaded", { count: allFuture.length });
 
+  const sourceCache = buildCombinationCacheForWeek(
+    staff,
+    sourceDays,
+    sourceByDateAndClinic,
+    selectedReceptionistByBlock,
+    dateOverrides
+  );
+
   const receptionistUpdates = {};
+  const receptionistSlotUpdates = {};
   const assistantsUpdates = {};
 
   const rxTemplates = [];
@@ -200,14 +233,22 @@ export async function computeCopyForwardAssignments({
       const key = blockKeyFor(iso, clinicName);
       const label = selectedReceptionistByBlock[key];
       if (label && summary.required_capacity > 0 && summary.clinic_start && summary.clinic_end) {
-        rxTemplates.push({
-          weekdayMon0: dow,
-          clinic: clinicName,
-          clinic_start: summary.clinic_start,
-          clinic_end: summary.clinic_end,
-          required_capacity: summary.required_capacity,
-          label,
-        });
+        const cacheEntry = sourceCache.get(key);
+        const combo = cacheEntry?.combos.find((c) => c.label === label);
+        const staffIds = combo
+          ? combo.contributions.map((x) => Number(x.staffId))
+          : parseReceptionistLabelToStaffIds(label, staff);
+        if (staffIds?.length) {
+          rxTemplates.push({
+            weekdayMon0: dow,
+            clinic: clinicName,
+            clinic_start: summary.clinic_start,
+            clinic_end: summary.clinic_end,
+            required_capacity: summary.required_capacity,
+            label,
+            staffIds,
+          });
+        }
       }
       for (const s of sessions) {
         const aid = getShiftAssignedAssistantId(s);
@@ -228,7 +269,7 @@ export async function computeCopyForwardAssignments({
 
   if (rxTemplates.length === 0 && asTemplates.length === 0) {
     console.log("[copy-forward] no source templates (nothing to copy)");
-    return { receptionist: receptionistUpdates, assistants: assistantsUpdates };
+    return { receptionist: receptionistUpdates, receptionistSlots: receptionistSlotUpdates, assistants: assistantsUpdates };
   }
 
   console.log("[copy-forward] source templates", { receptionistBlocks: rxTemplates.length, sessionsWithAssistant: asTemplates.length });
@@ -255,7 +296,12 @@ export async function computeCopyForwardAssignments({
           t.required_capacity === summary.required_capacity
       );
       if (tmpl) {
-        rxCandidates.push({ key: blockKeyFor(iso, clinicName), label: tmpl.label, iso });
+        rxCandidates.push({
+          key: blockKeyFor(iso, clinicName),
+          label: tmpl.label,
+          staffIds: tmpl.staffIds,
+          iso,
+        });
       }
       for (const s of sessions) {
         const dowS = localDowMon0(iso);
@@ -328,9 +374,10 @@ export async function computeCopyForwardAssignments({
         if (isoK === c.iso) daySel[k] = v;
       }
       daySel[c.key] = c.label;
-      if (dayReceptionistSelectionsAllValid(staff, c.iso, byDate, daySel)) {
+      if (dayReceptionistSelectionsAllValid(staff, c.iso, byDate, daySel, dateOverrides)) {
         rxWorking[c.key] = c.label;
         receptionistUpdates[c.key] = c.label;
+        receptionistSlotUpdates[c.key] = c.staffIds;
       }
     }
 
@@ -345,7 +392,6 @@ export async function computeCopyForwardAssignments({
       const sh = shiftsInWeek.find((x) => x.id === sid);
       if (!sh) return null;
       if (assistWorking[sid] !== undefined) return assistWorking[sid];
-      if (assignedAssistantBySession[sid] !== undefined) return assignedAssistantBySession[sid];
       return sh.assigned_staff_id ?? null;
     }
 
@@ -362,7 +408,7 @@ export async function computeCopyForwardAssignments({
       }));
       const target = shiftsWith.find((x) => x.id === session.id);
       if (!target) continue;
-      const eligible = eligibleAssistantsForSession(staff, shiftsWith, target);
+      const eligible = eligibleAssistantsForSession(staff, shiftsWith, target, dateOverrides);
       if (eligible.some((a) => Number(a.id) === Number(assistantId))) {
         assistWorking[session.id] = assistantId;
         assistantsUpdates[session.id] = assistantId;
@@ -377,5 +423,9 @@ export async function computeCopyForwardAssignments({
     assistantSessions: nAs,
   });
 
-  return { receptionist: receptionistUpdates, assistants: assistantsUpdates };
+  return {
+    receptionist: receptionistUpdates,
+    receptionistSlots: receptionistSlotUpdates,
+    assistants: assistantsUpdates,
+  };
 }
