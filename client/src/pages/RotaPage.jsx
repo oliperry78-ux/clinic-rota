@@ -628,15 +628,20 @@ export default function RotaPage() {
             const style = { top: popupFixedPos.top, left: popupFixedPos.left, width: popupFixedPos.width };
             if (activePopup.type === "receptionist") {
               const rk = blockKeyFor(activePopup.iso, activePopup.clinicName);
-              const { summary, combos } = combinationCache.get(rk) ?? {
+              const { summary, combos, eligible } = combinationCache.get(rk) ?? {
                 summary: computeClinicDaySummary([]),
                 combos: [],
+                eligible: [],
               };
               const selectedComboLabel = selectedReceptionistByBlock[rk] ?? null;
               const receptionistInvalid =
                 Boolean(selectedComboLabel) && !receptionistComboIsCurrentlyValid(selectedComboLabel, combos);
               const iso = activePopup.iso;
               const clinicName = activePopup.clinicName;
+              const eligibleReceptionistIds = new Set((eligible ?? []).map((p) => Number(p.id)));
+              const unavailableReceptionists = staff
+                .filter((p) => String(p.role || "").trim().toLowerCase() === "receptionist")
+                .filter((p) => !eligibleReceptionistIds.has(Number(p.id)));
               return (
                 <div ref={popupRef} className="rota-popup" style={style}>
                   <div className="rota-popup-head">
@@ -721,6 +726,26 @@ export default function RotaPage() {
                       );
                     })()
                   )}
+
+                  <div className="meta" style={{ fontSize: "0.75rem", marginTop: "0.5rem", marginBottom: "0.2rem" }}>
+                    Unavailable staff
+                  </div>
+                  {unavailableReceptionists.length === 0 ? (
+                    <p className="meta" style={{ margin: 0, fontSize: "0.75rem" }}>
+                      None.
+                    </p>
+                  ) : (
+                    <ul className="rota-popup-list">
+                      {unavailableReceptionists
+                        .slice()
+                        .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+                        .map((p) => (
+                          <li key={`rx-unavail-${p.id}`} className="rota-popup-row">
+                            <span>{p.name}</span>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
                 </div>
               );
             }
@@ -749,6 +774,13 @@ export default function RotaPage() {
                   const assignedIsEligible =
                     Boolean(assignedAssistantId) &&
                     eligibleAssistants.some((a) => Number(a.id) === Number(assignedAssistantId));
+                  const eligibleAssistantIds = new Set(eligibleAssistants.map((a) => Number(a.id)));
+                  const unavailableAssistants = staff
+                    .filter((p) => {
+                      const role = String(p.role || "").trim().toLowerCase();
+                      return role === "doctors assistant" || role === "assistant";
+                    })
+                    .filter((p) => !eligibleAssistantIds.has(Number(p.id)));
                   return (
                     <div>
                       {assignedAssistant && !assignedIsEligible && (
@@ -791,6 +823,29 @@ export default function RotaPage() {
                               )}
                             </li>
                           ))}
+                        </ul>
+                      )}
+
+                      <div
+                        className="meta"
+                        style={{ fontSize: "0.75rem", marginTop: "0.5rem", marginBottom: "0.2rem" }}
+                      >
+                        Unavailable staff
+                      </div>
+                      {unavailableAssistants.length === 0 ? (
+                        <p className="meta" style={{ margin: 0, fontSize: "0.75rem" }}>
+                          None.
+                        </p>
+                      ) : (
+                        <ul className="rota-popup-list">
+                          {unavailableAssistants
+                            .slice()
+                            .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+                            .map((p) => (
+                              <li key={`as-unavail-${p.id}`} className="rota-popup-row">
+                                <span>{p.name}</span>
+                              </li>
+                            ))}
                         </ul>
                       )}
                     </div>
