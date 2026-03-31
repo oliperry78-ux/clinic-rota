@@ -411,18 +411,26 @@ export default function RotaPage() {
           combos: [],
         };
         const selectedComboLabel = selectedReceptionistByBlock[key] ?? null;
-        const receptionistState = receptionistAssignmentDisplayState(
-          selectedComboLabel,
-          combos,
-          summary.required_capacity
-        );
-        if (receptionistState === "gap") n++;
+        const receptionistInvalid =
+          Boolean(selectedComboLabel) && !receptionistComboIsCurrentlyValid(selectedComboLabel, combos);
+        const receptionistCovered = Boolean(selectedComboLabel) && !receptionistInvalid;
+        const receptionistHasAnyValidOption = combos.length > 0;
+        const receptionistRequired = (summary.required_capacity ?? 0) > 0;
+        const receptionistGap = receptionistRequired && (!receptionistCovered && !receptionistHasAnyValidOption
+          ? true
+          : !receptionistCovered && receptionistInvalid
+            ? true
+            : !receptionistCovered && !receptionistHasAnyValidOption);
+        // Simpler: gap if required && (assigned invalid OR (unassigned && no options))
+        if (receptionistRequired && (receptionistInvalid || (!selectedComboLabel && !receptionistHasAnyValidOption))) n++;
 
         for (const s of sessions) {
           const assignedId = getAssignedAssistantId(s);
           const eligibleForSession = assistantEligibilityCache.get(s.id) ?? [];
-          const assistantState = assistantAssignmentDisplayState(assignedId, eligibleForSession);
-          if (assistantState === "gap") n++;
+          const assistantInvalid =
+            Boolean(assignedId) && !eligibleForSession.some((a) => Number(a.id) === Number(assignedId));
+          const assistantGap = assistantInvalid || (!assignedId && eligibleForSession.length === 0);
+          if (assistantGap) n++;
         }
       }
     }
