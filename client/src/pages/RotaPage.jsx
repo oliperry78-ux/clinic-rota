@@ -535,7 +535,7 @@ export default function RotaPage() {
                             {receptionistDisplayState === "assigned" ? (
                               <span className={receptionistInvalid ? "rota-assignment-invalid" : undefined}>
                                 {selectedComboLabel}
-                                {receptionistInvalid ? " (invalid)" : ""}
+                                {receptionistInvalid ? " (unavailable)" : ""}
                               </span>
                             ) : receptionistDisplayState === "gap" ? (
                               <span className="rota-assignment-gap">Unassigned (GAP)</span>
@@ -672,7 +672,7 @@ export default function RotaPage() {
                   {receptionistInvalid && (
                     <div className="rota-popup-row rota-assignment-invalid" style={{ marginBottom: "0.35rem" }}>
                       <span>
-                        {selectedComboLabel} (invalid)
+                        {selectedComboLabel} (unavailable)
                       </span>
                       <button type="button" className="secondary" onClick={() => void clearReceptionistCombo(iso, clinicName)}>
                         Unassign
