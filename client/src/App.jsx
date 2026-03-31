@@ -3,6 +3,7 @@ import StaffPage from "./pages/StaffPage.jsx";
 import WeekShiftsPage from "./pages/WeekShiftsPage.jsx";
 import RotaPage from "./pages/RotaPage.jsx";
 import DateAvailabilityPage from "./pages/DateAvailabilityPage.jsx";
+import TempDateAvailabilityPage from "./pages/TempDateAvailabilityPage.jsx";
 import HolidayRequestsPage from "./pages/HolidayRequestsPage.jsx";
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/shifts" element={<WeekShiftsPage />} />
           <Route path="/rota" element={<RotaPage />} />
           <Route path="/date-availability" element={<DateAvailabilityPage />} />
+          <Route path="/temp-date-availability/:staffId" element={<TempDateAvailabilityPage />} />
           <Route path="/holiday-requests" element={<HolidayRequestsPage />} />
         </Routes>
       </main>

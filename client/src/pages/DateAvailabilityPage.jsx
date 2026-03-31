@@ -1,159 +1,130 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
-import { toISODate } from "../dates.js";
+import DateAvailabilityEditor from "../components/DateAvailabilityEditor.jsx";
 
-const WEEK_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function tempSelfServePath(staffId) {
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") || "";
+  return `${base}/temp-date-availability/${staffId}`;
+}
 
-function buildMonthCells(year, monthIndex) {
-  const first = new Date(year, monthIndex, 1);
-  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-  let lead = first.getDay();
-  lead = lead === 0 ? 6 : lead - 1;
-  const cells = [];
-  for (let i = 0; i < lead; i++) cells.push(null);
-  for (let day = 1; day <= daysInMonth; day++) {
-    cells.push(toISODate(new Date(year, monthIndex, day)));
-  }
-  while (cells.length % 7 !== 0) cells.push(null);
-  return cells;
+function tempSelfServeAbsoluteUrl(staffId) {
+  return `${window.location.origin}${tempSelfServePath(staffId)}`;
 }
 
 export default function DateAvailabilityPage() {
   const [staff, setStaff] = useState([]);
-  const [dateOverrides, setDateOverrides] = useState([]);
   const [selectedId, setSelectedId] = useState("");
-  const [monthAnchor, setMonthAnchor] = useState(() => new Date());
-  const [localGreens, setLocalGreens] = useState(() => new Set());
-  const [error, setError] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const [copyMsg, setCopyMsg] = useState("");
 
-  async function load() {
-    setError(null);
+  async function loadStaff() {
     try {
-      const [sList, ov] = await Promise.all([api.getStaff(), api.getDateOverrides()]);
+      const sList = await api.getStaff();
       setStaff(sList);
-      setDateOverrides(ov?.dateOverrides ?? []);
-    } catch (e) {
-      setError(e.message);
+    } catch {
+      /* editor shows errors for overrides; staff load failure is rare */
     }
   }
 
   useEffect(() => {
-    load();
+    void loadStaff();
   }, []);
 
-  useEffect(() => {
-    if (!selectedId) {
-      setLocalGreens(new Set());
-      return;
-    }
-    const sid = Number(selectedId);
-    const next = new Set();
-    for (const o of dateOverrides) {
-      if (Number(o.staffId) === sid && o.isAvailable) next.add(String(o.date));
-    }
-    setLocalGreens(next);
-  }, [selectedId, dateOverrides]);
+  const selectedStaff = useMemo(
+    () => staff.find((s) => Number(s.id) === Number(selectedId)),
+    [staff, selectedId]
+  );
 
-  const y = monthAnchor.getFullYear();
-  const m = monthAnchor.getMonth();
-  const cells = useMemo(() => buildMonthCells(y, m), [y, m]);
-  const monthLabel = monthAnchor.toLocaleString(undefined, { month: "long", year: "numeric" });
+  const shareUrl = selectedId && selectedStaff?.staff_type === "Temp" ? tempSelfServeAbsoluteUrl(selectedId) : "";
+  const mailtoHref = useMemo(() => {
+    if (!shareUrl || !selectedStaff) return "";
+    const to = String(selectedStaff.email || "").trim();
+    const subject = encodeURIComponent("Your date availability link");
+    const body = encodeURIComponent(
+      `Please use this link to set the dates you are available:\n\n${shareUrl}\n`
+    );
+    if (!to) return "";
+    return `mailto:${to}?subject=${subject}&body=${body}`;
+  }, [shareUrl, selectedStaff]);
 
-  function toggleDay(iso) {
-    if (!selectedId || !iso) return;
-    setLocalGreens((prev) => {
-      const next = new Set(prev);
-      if (next.has(iso)) next.delete(iso);
-      else next.add(iso);
-      return next;
-    });
-  }
-
-  async function onSave() {
-    if (!selectedId) return;
-    setSaving(true);
-    setError(null);
+  async function onCopyLink() {
+    if (!shareUrl) return;
+    setCopyMsg("");
     try {
-      const dateOverridesPayload = [...localGreens].sort().map((date) => ({ date, isAvailable: true }));
-      await api.putStaffDateOverrides(Number(selectedId), dateOverridesPayload, "available");
-      const ov = await api.getDateOverrides();
-      setDateOverrides(ov?.dateOverrides ?? []);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
+      await navigator.clipboard.writeText(shareUrl);
+      setCopyMsg("Copied.");
+      window.setTimeout(() => setCopyMsg(""), 2000);
+    } catch {
+      setCopyMsg("Copy failed — copy from the address bar manually.");
     }
   }
 
   return (
     <div className="card date-availability-card">
-      <h2>Date Availability</h2>
-      <p className="meta date-availability-intro">
-        Pick a staff member, then click days to mark them as available on those dates (green). Blank days have no
-        override—weekly availability still applies for permanent staff. Temp staff with no weekly pattern only appear
-        when a day is marked green.
-      </p>
-      {error && <div className="error-banner">{error}</div>}
-
-      <div className="date-availability-toolbar">
-        <label className="date-availability-staff-label">
-          Staff member{" "}
-          <select
-            value={selectedId}
-            onChange={(e) => setSelectedId(e.target.value)}
-            className="date-availability-select"
-          >
-            <option value="">Choose…</option>
-            {staff.map((s) => (
-              <option key={s.id} value={String(s.id)}>
-                {s.name} ({s.role})
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="button" disabled={!selectedId || saving} onClick={() => void onSave()}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </div>
-
-      <div className="date-availability-month-bar">
-        <button type="button" className="secondary" onClick={() => setMonthAnchor(new Date(y, m - 1, 1))}>
-          ← Prev
-        </button>
-        <span className="date-availability-month-title">{monthLabel}</span>
-        <button type="button" className="secondary" onClick={() => setMonthAnchor(new Date(y, m + 1, 1))}>
-          Next →
-        </button>
-      </div>
-
-      <div className="date-availability-calendar" aria-hidden={!selectedId}>
-        <div className="date-availability-dow-row">
-          {WEEK_HEADERS.map((h) => (
-            <div key={h} className="date-availability-dow">
-              {h}
-            </div>
-          ))}
-        </div>
-        <div className="date-availability-grid">
-          {cells.map((iso, idx) =>
-            iso ? (
-              <button
-                key={iso}
-                type="button"
-                disabled={!selectedId}
-                className={`date-availability-day${localGreens.has(iso) ? " date-availability-day-on" : ""}`}
-                onClick={() => toggleDay(iso)}
+      <DateAvailabilityEditor
+        staffId={selectedId ? Number(selectedId) : null}
+        intro={
+          <p className="meta date-availability-intro">
+            Pick a staff member, then click days to mark them as available on those dates (green). Blank days have no
+            override—weekly availability still applies for permanent staff. Temp staff with no weekly pattern only appear
+            when a day is marked green.
+          </p>
+        }
+        managerToolbar={
+          <>
+            <label className="date-availability-staff-label">
+              Staff member{" "}
+              <select
+                value={selectedId}
+                onChange={(e) => {
+                  setSelectedId(e.target.value);
+                  setCopyMsg("");
+                }}
+                className="date-availability-select"
               >
-                {Number(iso.slice(8, 10))}
-              </button>
-            ) : (
-              <div key={`pad-${idx}`} className="date-availability-day date-availability-day-empty" />
-            )
-          )}
-        </div>
-      </div>
-      {!selectedId && <p className="meta">Select a staff member to edit date overrides.</p>}
+                <option value="">Choose…</option>
+                {staff.map((s) => (
+                  <option key={s.id} value={String(s.id)}>
+                    {s.name} ({s.role})
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedStaff?.staff_type === "Temp" && selectedId && (
+              <div
+                className="temp-availability-share"
+                style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}
+              >
+                <span className="meta" style={{ fontSize: "0.82rem" }}>
+                  Temp self-serve:
+                </span>
+                <button type="button" className="secondary" onClick={() => void onCopyLink()}>
+                  Copy Link
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={!mailtoHref}
+                  title={
+                    selectedStaff?.email?.trim()
+                      ? "Open your email app with a draft to this temp"
+                      : "Add an email on the Staff page first"
+                  }
+                  onClick={() => {
+                    if (mailtoHref) window.location.href = mailtoHref;
+                  }}
+                >
+                  Email Link
+                </button>
+                {copyMsg && (
+                  <span className="meta" style={{ fontSize: "0.8rem" }}>
+                    {copyMsg}
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        }
+      />
     </div>
   );
 }
