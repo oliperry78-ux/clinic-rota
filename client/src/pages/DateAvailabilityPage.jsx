@@ -35,16 +35,6 @@ export default function DateAvailabilityPage() {
   );
 
   const shareUrl = selectedId && selectedStaff?.staff_type === "Temp" ? tempSelfServeAbsoluteUrl(selectedId) : "";
-  const mailtoHref = useMemo(() => {
-    if (!shareUrl || !selectedStaff) return "";
-    const to = String(selectedStaff.email || "").trim();
-    const subject = encodeURIComponent("Your date availability link");
-    const body = encodeURIComponent(
-      `Please use this link to set the dates you are available:\n\n${shareUrl}\n`
-    );
-    if (!to) return "";
-    return `mailto:${to}?subject=${subject}&body=${body}`;
-  }, [shareUrl, selectedStaff]);
 
   async function onCopyLink() {
     if (!shareUrl) return;
@@ -99,21 +89,6 @@ export default function DateAvailabilityPage() {
                 </span>
                 <button type="button" className="secondary" onClick={() => void onCopyLink()}>
                   Copy Link
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={!mailtoHref}
-                  title={
-                    selectedStaff?.email?.trim()
-                      ? "Open your email app with a draft to this temp"
-                      : "Add an email on the Staff page first"
-                  }
-                  onClick={() => {
-                    if (mailtoHref) window.location.href = mailtoHref;
-                  }}
-                >
-                  Email Link
                 </button>
                 {copyMsg && (
                   <span className="meta" style={{ fontSize: "0.8rem" }}>
