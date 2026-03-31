@@ -66,6 +66,12 @@ function clampCapacity(n) {
   return v;
 }
 
+function looksLikeEmail(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return true;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
 function allowedClinicsPayload(all, text) {
   if (all) return { all: true };
   return { all: false, clinics: parseClinicsCsv(text) };
@@ -83,7 +89,15 @@ function StaffTableRow({ member, editingId, onStartEdit, onCancelEdit, onSaveEdi
 
   return (
     <tr>
-      <td>{member.name}</td>
+      <td>
+        {member.name}
+        {(member.email || member.phone) && (
+          <div style={{ fontSize: "0.8rem", color: "var(--muted)", marginTop: "0.15rem", lineHeight: 1.25 }}>
+            {member.email && <div>{member.email}</div>}
+            {member.phone && <div>{member.phone}</div>}
+          </div>
+        )}
+      </td>
       <td>{member.role}</td>
       <td>{member.staff_type ?? "Full time"}</td>
       <td>{clampCapacity(member.capacity ?? 1)}</td>
@@ -174,6 +188,8 @@ export default function StaffPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [role, setRole] = useState("receptionist");
   const [staffType, setStaffType] = useState("Full time");
   const [capacity, setCapacity] = useState(1);
@@ -188,6 +204,8 @@ export default function StaffPage() {
   const [editRole, setEditRole] = useState("receptionist");
   const [editStaffType, setEditStaffType] = useState("Full time");
   const [editCapacity, setEditCapacity] = useState(1);
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
   const [editAllowedAll, setEditAllowedAll] = useState(true);
   const [editAllowedClinicsText, setEditAllowedClinicsText] = useState("");
 
@@ -211,8 +229,14 @@ export default function StaffPage() {
     e.preventDefault();
     setError(null);
     try {
+      if (!looksLikeEmail(email)) {
+        setError("Email format looks invalid.");
+        return;
+      }
       await api.createStaff({
         name,
+        email: String(email || "").trim() || null,
+        phone: String(phone || "").trim() || null,
         role,
         staff_type: staffType,
         availability: {
@@ -223,6 +247,8 @@ export default function StaffPage() {
         allowed_clinics: allowedClinicsPayload(createAllowedAll, createAllowedClinicsText),
       });
       setName("");
+      setEmail("");
+      setPhone("");
       setRole("receptionist");
       setStaffType("Full time");
       setCapacity(1);
@@ -251,6 +277,8 @@ export default function StaffPage() {
     setEditRole(s.role ?? "receptionist");
     setEditStaffType(s.staff_type ?? "Full time");
     setEditCapacity(clampCapacity(s.capacity ?? 1));
+    setEditEmail(String(s.email ?? ""));
+    setEditPhone(String(s.phone ?? ""));
     const ac = s.allowed_clinics;
     setEditAllowedAll(!ac || ac.all !== false);
     setEditAllowedClinicsText(ac?.all === false && Array.isArray(ac.clinics) ? ac.clinics.join(", ") : "");
@@ -263,9 +291,15 @@ export default function StaffPage() {
   async function saveEdit() {
     setError(null);
     try {
+      if (!looksLikeEmail(editEmail)) {
+        setError("Email format looks invalid.");
+        return;
+      }
       const s = staff.find((x) => x.id === editingId);
       await api.updateStaff(editingId, {
         name: s.name,
+        email: String(editEmail || "").trim() || null,
+        phone: String(editPhone || "").trim() || null,
         role: editRole,
         staff_type: editStaffType,
         availability: {
@@ -314,6 +348,24 @@ export default function StaffPage() {
             <div>
               <label>Name</label>
               <input value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Alex" />
+            </div>
+            <div>
+              <label>Email</label>
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="e.g. alex@example.com"
+                inputMode="email"
+              />
+            </div>
+            <div>
+              <label>Phone</label>
+              <input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="e.g. 07123 456789"
+                inputMode="tel"
+              />
             </div>
             <div>
               <label>Role</label>
@@ -414,6 +466,24 @@ export default function StaffPage() {
         <section className="card">
           <h2>Editing — {staff.find((s) => s.id === editingId)?.name}</h2>
           <div className="form-row" style={{ marginBottom: "0.75rem" }}>
+            <div>
+              <label>Email</label>
+              <input
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+                placeholder="e.g. alex@example.com"
+                inputMode="email"
+              />
+            </div>
+            <div>
+              <label>Phone</label>
+              <input
+                value={editPhone}
+                onChange={(e) => setEditPhone(e.target.value)}
+                placeholder="e.g. 07123 456789"
+                inputMode="tel"
+              />
+            </div>
             <div>
               <label>Capacity</label>
               <input

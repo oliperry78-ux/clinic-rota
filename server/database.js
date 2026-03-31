@@ -18,6 +18,8 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     role TEXT NOT NULL,
+    email TEXT,
+    phone TEXT,
     staff_type TEXT NOT NULL DEFAULT 'Full time',
     /* JSON: { "week1": [...], "week2": [...] } — weekday slots per repeating biweek half */
     availability_json TEXT NOT NULL DEFAULT '{"week1":[],"week2":[]}',
@@ -101,6 +103,12 @@ function migrateStaffDateOverridesV2() {
 function migrateStaffColumns() {
   const cols = db.prepare("PRAGMA table_info(staff)").all();
   const names = new Set(cols.map((c) => c.name));
+  if (!names.has("email")) {
+    db.exec("ALTER TABLE staff ADD COLUMN email TEXT");
+  }
+  if (!names.has("phone")) {
+    db.exec("ALTER TABLE staff ADD COLUMN phone TEXT");
+  }
   if (!names.has("capacity")) {
     db.exec("ALTER TABLE staff ADD COLUMN capacity INTEGER NOT NULL DEFAULT 1");
   }

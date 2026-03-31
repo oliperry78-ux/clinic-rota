@@ -70,7 +70,7 @@ app.get("/api/staff", (_req, res) => {
 });
 
 app.post("/api/staff", (req, res) => {
-  const { name, role, staff_type, availability, capacity, allowed_clinics } = req.body;
+  const { name, role, email, phone, staff_type, availability, capacity, allowed_clinics } = req.body;
   if (!name || !role) {
     return res.status(400).json({ error: "name and role are required" });
   }
@@ -79,21 +79,25 @@ app.post("/api/staff", (req, res) => {
   const cap = normalizeCapacity(capacity ?? 1);
   const staffType = normalizeStaffType(staff_type);
   const allowed_clinics_json = JSON.stringify(normalizeAllowedClinicsInput(allowed_clinics));
+  const emailTrim = String(email ?? "").trim() || null;
+  const phoneTrim = String(phone ?? "").trim() || null;
   const info = db
     .prepare(
-      "INSERT INTO staff (name, role, staff_type, availability_json, capacity, allowed_clinics_json) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO staff (name, role, email, phone, staff_type, availability_json, capacity, allowed_clinics_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .run(name.trim(), roleNormalized, staffType, availability_json, cap, allowed_clinics_json);
+    .run(name.trim(), roleNormalized, emailTrim, phoneTrim, staffType, availability_json, cap, allowed_clinics_json);
   const row = db.prepare("SELECT * FROM staff WHERE id = ?").get(info.lastInsertRowid);
   res.status(201).json(normalizeStaffRow(row));
 });
 
 app.put("/api/staff/:id", (req, res) => {
   const id = Number(req.params.id);
-  const { name, role, staff_type, availability, capacity, allowed_clinics } = req.body;
+  const { name, role, email, phone, staff_type, availability, capacity, allowed_clinics } = req.body;
   const existing = db.prepare("SELECT * FROM staff WHERE id = ?").get(id);
   if (!existing) return res.status(404).json({ error: "staff not found" });
 
+  const emailTrim = email !== undefined ? (String(email ?? "").trim() || null) : (existing.email ?? null);
+  const phoneTrim = phone !== undefined ? (String(phone ?? "").trim() || null) : (existing.phone ?? null);
   const availability_json =
     availability !== undefined
       ? JSON.stringify(normalizeAvailabilityForStorage(availability))
@@ -108,10 +112,12 @@ app.put("/api/staff/:id", (req, res) => {
       : (existing.allowed_clinics_json ?? '{"all":true}');
 
   db.prepare(
-    "UPDATE staff SET name = ?, role = ?, staff_type = ?, availability_json = ?, capacity = ?, allowed_clinics_json = ? WHERE id = ?"
+    "UPDATE staff SET name = ?, role = ?, email = ?, phone = ?, staff_type = ?, availability_json = ?, capacity = ?, allowed_clinics_json = ? WHERE id = ?"
   ).run(
     name?.trim() ?? existing.name,
     roleNormalized,
+    emailTrim,
+    phoneTrim,
     staffType,
     availability_json,
     cap,
