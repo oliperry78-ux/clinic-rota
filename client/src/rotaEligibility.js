@@ -74,12 +74,14 @@ function dateOverrideAvailability(staffId, isoDate, dateOverrides) {
   if (!Array.isArray(dateOverrides) || dateOverrides.length === 0) return undefined;
   const sid = Number(staffId);
   const d = String(isoDate);
+  let sawAvailable = false;
   for (const o of dateOverrides) {
     if (Number(o.staffId) === sid && String(o.date) === d) {
-      return Boolean(o.isAvailable);
+      if (o.isAvailable === false) return false; // holiday/unavailable wins
+      sawAvailable = true;
     }
   }
-  return undefined;
+  return sawAvailable ? true : undefined;
 }
 
 export function isStaffAvailableForShiftWindow(staff, isoDate, dayOfWeek, windowStart, windowEnd, dateOverrides) {

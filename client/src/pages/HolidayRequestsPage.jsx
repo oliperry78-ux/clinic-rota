@@ -18,12 +18,12 @@ function buildMonthCells(year, monthIndex) {
   return cells;
 }
 
-export default function DateAvailabilityPage() {
+export default function HolidayRequestsPage() {
   const [staff, setStaff] = useState([]);
   const [dateOverrides, setDateOverrides] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [monthAnchor, setMonthAnchor] = useState(() => new Date());
-  const [localGreens, setLocalGreens] = useState(() => new Set());
+  const [localReds, setLocalReds] = useState(() => new Set());
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -44,15 +44,15 @@ export default function DateAvailabilityPage() {
 
   useEffect(() => {
     if (!selectedId) {
-      setLocalGreens(new Set());
+      setLocalReds(new Set());
       return;
     }
     const sid = Number(selectedId);
     const next = new Set();
     for (const o of dateOverrides) {
-      if (Number(o.staffId) === sid && o.isAvailable) next.add(String(o.date));
+      if (Number(o.staffId) === sid && o.isAvailable === false) next.add(String(o.date));
     }
-    setLocalGreens(next);
+    setLocalReds(next);
   }, [selectedId, dateOverrides]);
 
   const y = monthAnchor.getFullYear();
@@ -62,7 +62,7 @@ export default function DateAvailabilityPage() {
 
   function toggleDay(iso) {
     if (!selectedId || !iso) return;
-    setLocalGreens((prev) => {
+    setLocalReds((prev) => {
       const next = new Set(prev);
       if (next.has(iso)) next.delete(iso);
       else next.add(iso);
@@ -75,8 +75,8 @@ export default function DateAvailabilityPage() {
     setSaving(true);
     setError(null);
     try {
-      const dateOverridesPayload = [...localGreens].sort().map((date) => ({ date, isAvailable: true }));
-      await api.putStaffDateOverrides(Number(selectedId), dateOverridesPayload, "available");
+      const dateOverridesPayload = [...localReds].sort().map((date) => ({ date, isAvailable: false }));
+      await api.putStaffDateOverrides(Number(selectedId), dateOverridesPayload, "unavailable");
       const ov = await api.getDateOverrides();
       setDateOverrides(ov?.dateOverrides ?? []);
     } catch (e) {
@@ -88,22 +88,17 @@ export default function DateAvailabilityPage() {
 
   return (
     <div className="card date-availability-card">
-      <h2>Date Availability</h2>
+      <h2>Holiday Requests</h2>
       <p className="meta date-availability-intro">
-        Pick a staff member, then click days to mark them as available on those dates (green). Blank days have no
-        override—weekly availability still applies for permanent staff. Temp staff with no weekly pattern only appear
-        when a day is marked green.
+        Pick a staff member, then click days to mark them as unavailable for the whole day (red). Clicking again removes
+        the holiday mark.
       </p>
       {error && <div className="error-banner">{error}</div>}
 
       <div className="date-availability-toolbar">
         <label className="date-availability-staff-label">
           Staff member{" "}
-          <select
-            value={selectedId}
-            onChange={(e) => setSelectedId(e.target.value)}
-            className="date-availability-select"
-          >
+          <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)} className="date-availability-select">
             <option value="">Choose…</option>
             {staff.map((s) => (
               <option key={s.id} value={String(s.id)}>
@@ -142,7 +137,7 @@ export default function DateAvailabilityPage() {
                 key={iso}
                 type="button"
                 disabled={!selectedId}
-                className={`date-availability-day${localGreens.has(iso) ? " date-availability-day-on" : ""}`}
+                className={`date-availability-day${localReds.has(iso) ? " date-availability-day-off" : ""}`}
                 onClick={() => toggleDay(iso)}
               >
                 {Number(iso.slice(8, 10))}
@@ -153,7 +148,8 @@ export default function DateAvailabilityPage() {
           )}
         </div>
       </div>
-      {!selectedId && <p className="meta">Select a staff member to edit date overrides.</p>}
+      {!selectedId && <p className="meta">Select a staff member to edit holiday overrides.</p>}
     </div>
   );
 }
+

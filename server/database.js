@@ -56,11 +56,47 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS staff_date_override (
     staff_id INTEGER NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
     shift_date TEXT NOT NULL,
-    is_available INTEGER NOT NULL,
-    PRIMARY KEY (staff_id, shift_date)
+    override_type TEXT NOT NULL, -- 'available' | 'unavailable'
+    PRIMARY KEY (staff_id, shift_date, override_type)
   );
   CREATE INDEX IF NOT EXISTS idx_staff_date_override_date ON staff_date_override(shift_date);
 `);
+
+/**
+ * v2: staff_date_override becomes multi-row per date to support both:
+ * - explicit available overrides
+ * - explicit unavailable (holiday) overrides
+ *
+ * Legacy schema: (staff_id, shift_date) -> is_available (0/1)
+ */
+function migrateStaffDateOverridesV2() {
+  const ti = db.prepare("PRAGMA table_info(staff_date_override)").all();
+  if (ti.length === 0) return;
+  const names = new Set(ti.map((c) => c.name));
+  if (names.has("override_type")) return; // already v2
+  if (!names.has("is_available")) return; // unknown; leave as-is
+
+  const tx = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE staff_date_override__v2 (
+        staff_id INTEGER NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+        shift_date TEXT NOT NULL,
+        override_type TEXT NOT NULL,
+        PRIMARY KEY (staff_id, shift_date, override_type)
+      );
+    `);
+    db.exec(`
+      INSERT INTO staff_date_override__v2 (staff_id, shift_date, override_type)
+      SELECT staff_id, shift_date,
+             CASE WHEN is_available = 1 THEN 'available' ELSE 'unavailable' END AS override_type
+      FROM staff_date_override;
+    `);
+    db.exec("DROP TABLE staff_date_override;");
+    db.exec("ALTER TABLE staff_date_override__v2 RENAME TO staff_date_override;");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_staff_date_override_date ON staff_date_override(shift_date);");
+  });
+  tx();
+}
 
 function migrateStaffColumns() {
   const cols = db.prepare("PRAGMA table_info(staff)").all();
@@ -201,6 +237,7 @@ function migrateStaffAssistantRoleName() {
 }
 
 migrateStaffColumns();
+migrateStaffDateOverridesV2();
 migrateShiftsClinicUnique();
 migrateShiftsSessionUnique();
 migrateShiftSessionRoleTag();

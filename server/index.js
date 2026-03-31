@@ -148,17 +148,24 @@ function normalizeStaffRow(row) {
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 app.get("/api/date-overrides", (_req, res) => {
-  const rows = db.prepare("SELECT staff_id, shift_date, is_available FROM staff_date_override").all();
+  const rows = db.prepare("SELECT staff_id, shift_date, override_type FROM staff_date_override").all();
   res.json({
     dateOverrides: rows.map((r) => ({
       staffId: String(r.staff_id),
       date: r.shift_date,
-      isAvailable: Boolean(r.is_available),
+      isAvailable: String(r.override_type) === "available",
     })),
   });
 });
 
-/** Replace all date overrides for one staff member (calendar UI sends only isAvailable: true rows). */
+/**
+ * Replace date overrides for one staff member.
+ *
+ * Back-compat behavior:
+ * - If payload contains only isAvailable:true overrides, we replace only 'available' rows (leave holidays).
+ * - If payload contains only isAvailable:false overrides, we replace only 'unavailable' rows (leave available).
+ * - If payload contains a mix, we replace both.
+ */
 app.put("/api/staff/:id/date-overrides", (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
@@ -172,32 +179,58 @@ app.put("/api/staff/:id/date-overrides", (req, res) => {
     return res.status(400).json({ error: "dateOverrides array required" });
   }
 
-  const byDate = new Map();
+  const overrideScopeRaw = String(req.body?.overrideScope ?? "").trim().toLowerCase();
+  const overrideScope =
+    overrideScopeRaw === "available" || overrideScopeRaw === "unavailable" || overrideScopeRaw === "both"
+      ? overrideScopeRaw
+      : null;
+
+  const availableDates = new Set();
+  const unavailableDates = new Set();
+  let sawTrue = false;
+  let sawFalse = false;
   for (const o of raw) {
     const date = String(o?.date ?? "").trim();
     if (!ISO_DATE_RE.test(date)) continue;
-    byDate.set(date, o?.isAvailable === false ? 0 : 1);
+    const isAvail = o?.isAvailable === false ? false : true;
+    if (isAvail) {
+      sawTrue = true;
+      availableDates.add(date);
+    } else {
+      sawFalse = true;
+      unavailableDates.add(date);
+    }
   }
 
   const tx = db.transaction(() => {
-    db.prepare("DELETE FROM staff_date_override WHERE staff_id = ?").run(id);
+    const scope = overrideScope ?? (sawTrue && sawFalse ? "both" : sawTrue ? "available" : sawFalse ? "unavailable" : "available");
+    if (scope === "both") {
+      db.prepare("DELETE FROM staff_date_override WHERE staff_id = ?").run(id);
+    } else if (scope === "available") {
+      db.prepare("DELETE FROM staff_date_override WHERE staff_id = ? AND override_type = 'available'").run(id);
+    } else if (scope === "unavailable") {
+      db.prepare("DELETE FROM staff_date_override WHERE staff_id = ? AND override_type = 'unavailable'").run(id);
+    }
     const ins = db.prepare(
-      "INSERT INTO staff_date_override (staff_id, shift_date, is_available) VALUES (?, ?, ?)"
+      "INSERT OR REPLACE INTO staff_date_override (staff_id, shift_date, override_type) VALUES (?, ?, ?)"
     );
-    for (const [shift_date, is_available] of byDate) {
-      ins.run(id, shift_date, is_available);
+    for (const d of availableDates) {
+      ins.run(id, d, "available");
+    }
+    for (const d of unavailableDates) {
+      ins.run(id, d, "unavailable");
     }
   });
   tx();
 
   const rows = db
-    .prepare("SELECT staff_id, shift_date, is_available FROM staff_date_override WHERE staff_id = ?")
+    .prepare("SELECT staff_id, shift_date, override_type FROM staff_date_override WHERE staff_id = ?")
     .all(id);
   res.json({
     dateOverrides: rows.map((r) => ({
       staffId: String(r.staff_id),
       date: r.shift_date,
-      isAvailable: Boolean(r.is_available),
+      isAvailable: String(r.override_type) === "available",
     })),
   });
 });

@@ -27,10 +27,10 @@ export const api = {
   deleteShift: (id) => request(`/api/shifts/${id}`, { method: "DELETE" }),
 
   getDateOverrides: () => request("/api/date-overrides"),
-  putStaffDateOverrides: (staffId, dateOverrides) =>
+  putStaffDateOverrides: (staffId, dateOverrides, overrideScope) =>
     request(`/api/staff/${staffId}/date-overrides`, {
       method: "PUT",
-      body: JSON.stringify({ dateOverrides }),
+      body: JSON.stringify({ dateOverrides, overrideScope }),
     }),
 
   getClinicDayReceptionistSlots: (startDate, endDate) =>

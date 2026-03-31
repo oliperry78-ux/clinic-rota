@@ -703,6 +703,12 @@ button.rota-edit-link:focus-visible {
   color: #065f46;
 }
 
+.date-availability-day-off {
+  background: var(--gap);
+  border-color: var(--gap-border);
+  color: #dc2626;
+}
+
 .date-availability-day-empty {
   border: none;
   background: transparent;

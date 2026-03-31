@@ -3,6 +3,7 @@ import StaffPage from "./pages/StaffPage.jsx";
 import WeekShiftsPage from "./pages/WeekShiftsPage.jsx";
 import RotaPage from "./pages/RotaPage.jsx";
 import DateAvailabilityPage from "./pages/DateAvailabilityPage.jsx";
+import HolidayRequestsPage from "./pages/HolidayRequestsPage.jsx";
 
 export default function App() {
   return (
@@ -22,6 +23,9 @@ export default function App() {
           <NavLink to="/date-availability" className={({ isActive }) => (isActive ? "active" : "")}>
             Date availability
           </NavLink>
+          <NavLink to="/holiday-requests" className={({ isActive }) => (isActive ? "active" : "")}>
+            Holiday Requests
+          </NavLink>
         </nav>
       </header>
       <main className="main">
@@ -30,6 +34,7 @@ export default function App() {
           <Route path="/shifts" element={<WeekShiftsPage />} />
           <Route path="/rota" element={<RotaPage />} />
           <Route path="/date-availability" element={<DateAvailabilityPage />} />
+          <Route path="/holiday-requests" element={<HolidayRequestsPage />} />
         </Routes>
       </main>
     </div>
