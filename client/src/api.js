@@ -1,6 +1,17 @@
-/** Base URL: Vite dev server proxies /api to the Node backend. */
+/**
+ * Production: set `VITE_API_URL` (e.g. https://clinic-rota-server.onrender.com) so `/api/*` hits Render.
+ * Local dev: leave unset — same-origin `/api/*` is proxied by Vite to the Node backend.
+ */
+const API_BASE = String(import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+
+function apiUrl(path) {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  if (!API_BASE) return p;
+  return `${API_BASE}${p}`;
+}
+
 async function request(path, options = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(apiUrl(path), {
     headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
   });
