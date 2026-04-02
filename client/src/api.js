@@ -3,6 +3,7 @@
  * Local dev: leave unset — same-origin `/api/*` is proxied by Vite to the Node backend.
  */
 const API_BASE = String(import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+console.log("API BASE:", import.meta.env.VITE_API_URL);
 
 function apiUrl(path) {
   const p = path.startsWith("/") ? path : `/${path}`;
