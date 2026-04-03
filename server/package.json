@@ -8,9 +8,10 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.6.0",
     "clinic-staff-rota": "file:..",
     "cors": "^2.8.5",
-    "express": "^4.21.0"
+    "dotenv": "^16.4.7",
+    "express": "^4.21.0",
+    "pg": "^8.13.1"
   }
 }

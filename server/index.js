@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { db } from "./database.js";
+import { pool, withTransaction } from "./database.js";
 import { normalizeAvailabilityForStorage, parseAvailabilityJson } from "./scheduling.js";
 
 function normalizeCapacity(raw) {
@@ -45,7 +45,7 @@ function pickShiftDateForUpdate(body, existing) {
 
 function parseAllowedClinicsJson(json) {
   try {
-    const v = JSON.parse(json);
+    const v = typeof json === "string" ? JSON.parse(json) : json;
     if (v && typeof v === "object" && v.all === true) return { all: true, clinics: [] };
     if (v && typeof v === "object" && v.all === false && Array.isArray(v.clinics)) {
       return { all: false, clinics: v.clinics.map(String) };
@@ -56,6 +56,17 @@ function parseAllowedClinicsJson(json) {
   return { all: true, clinics: [] };
 }
 
+/** JSON/JSONB from pg may arrive as object; API expects parsed nested objects like SQLite TEXT did. */
+function coerceJsonText(value, fallback) {
+  if (value == null) return fallback;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback;
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -64,12 +75,17 @@ app.use(express.json());
 
 // ---------- Staff ----------
 
-app.get("/api/staff", (_req, res) => {
-  const rows = db.prepare("SELECT * FROM staff ORDER BY name COLLATE NOCASE").all();
-  res.json(rows.map(normalizeStaffRow));
+app.get("/api/staff", async (_req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT * FROM staff ORDER BY LOWER(name) ASC");
+    res.json(rows.map(normalizeStaffRow));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
 
-app.post("/api/staff", (req, res) => {
+app.post("/api/staff", async (req, res) => {
   const { name, role, email, phone, staff_type, availability, capacity, allowed_clinics } = req.body;
   if (!name || !role) {
     return res.status(400).json({ error: "name and role are required" });
@@ -81,88 +97,123 @@ app.post("/api/staff", (req, res) => {
   const allowed_clinics_json = JSON.stringify(normalizeAllowedClinicsInput(allowed_clinics));
   const emailTrim = String(email ?? "").trim() || null;
   const phoneTrim = String(phone ?? "").trim() || null;
-  const info = db
-    .prepare(
-      "INSERT INTO staff (name, role, email, phone, staff_type, availability_json, capacity, allowed_clinics_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    )
-    .run(name.trim(), roleNormalized, emailTrim, phoneTrim, staffType, availability_json, cap, allowed_clinics_json);
-  const row = db.prepare("SELECT * FROM staff WHERE id = ?").get(info.lastInsertRowid);
-  res.status(201).json(normalizeStaffRow(row));
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO staff (name, role, email, phone, staff_type, availability_json, capacity, allowed_clinics_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [name.trim(), roleNormalized, emailTrim, phoneTrim, staffType, availability_json, cap, allowed_clinics_json]
+    );
+    res.status(201).json(normalizeStaffRow(rows[0]));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
 
-app.put("/api/staff/:id", (req, res) => {
+app.put("/api/staff/:id", async (req, res) => {
   const id = Number(req.params.id);
   const { name, role, email, phone, staff_type, availability, capacity, allowed_clinics } = req.body;
-  const existing = db.prepare("SELECT * FROM staff WHERE id = ?").get(id);
-  if (!existing) return res.status(404).json({ error: "staff not found" });
+  try {
+    const existingRes = await pool.query("SELECT * FROM staff WHERE id = $1", [id]);
+    const existing = existingRes.rows[0];
+    if (!existing) return res.status(404).json({ error: "staff not found" });
 
-  const emailTrim = email !== undefined ? (String(email ?? "").trim() || null) : (existing.email ?? null);
-  const phoneTrim = phone !== undefined ? (String(phone ?? "").trim() || null) : (existing.phone ?? null);
-  const availability_json =
-    availability !== undefined
-      ? JSON.stringify(normalizeAvailabilityForStorage(availability))
-      : existing.availability_json;
-  const roleNormalized = role !== undefined ? normalizeRole(role) : normalizeRole(existing.role);
-  const cap = capacity !== undefined ? normalizeCapacity(capacity) : normalizeCapacity(existing.capacity ?? 1);
-  const staffType =
-    staff_type !== undefined ? normalizeStaffType(staff_type) : normalizeStaffType(existing.staff_type);
-  const allowed_clinics_json =
-    allowed_clinics !== undefined
-      ? JSON.stringify(normalizeAllowedClinicsInput(allowed_clinics))
-      : (existing.allowed_clinics_json ?? '{"all":true}');
+    const emailTrim = email !== undefined ? (String(email ?? "").trim() || null) : (existing.email ?? null);
+    const phoneTrim = phone !== undefined ? (String(phone ?? "").trim() || null) : (existing.phone ?? null);
+    const availability_json =
+      availability !== undefined
+        ? JSON.stringify(normalizeAvailabilityForStorage(availability))
+        : coerceJsonText(existing.availability_json, '{"week1":[],"week2":[]}');
+    const roleNormalized = role !== undefined ? normalizeRole(role) : normalizeRole(existing.role);
+    const cap = capacity !== undefined ? normalizeCapacity(capacity) : normalizeCapacity(existing.capacity ?? 1);
+    const staffType =
+      staff_type !== undefined ? normalizeStaffType(staff_type) : normalizeStaffType(existing.staff_type);
+    const allowed_clinics_json =
+      allowed_clinics !== undefined
+        ? JSON.stringify(normalizeAllowedClinicsInput(allowed_clinics))
+        : coerceJsonText(existing.allowed_clinics_json, '{"all":true}');
 
-  db.prepare(
-    "UPDATE staff SET name = ?, role = ?, email = ?, phone = ?, staff_type = ?, availability_json = ?, capacity = ?, allowed_clinics_json = ? WHERE id = ?"
-  ).run(
-    name?.trim() ?? existing.name,
-    roleNormalized,
-    emailTrim,
-    phoneTrim,
-    staffType,
-    availability_json,
-    cap,
-    allowed_clinics_json,
-    id
-  );
-  const row = db.prepare("SELECT * FROM staff WHERE id = ?").get(id);
-  res.json(normalizeStaffRow(row));
+    await pool.query(
+      `UPDATE staff SET name = $1, role = $2, email = $3, phone = $4, staff_type = $5, availability_json = $6, capacity = $7, allowed_clinics_json = $8
+       WHERE id = $9`,
+      [
+        name?.trim() ?? existing.name,
+        roleNormalized,
+        emailTrim,
+        phoneTrim,
+        staffType,
+        availability_json,
+        cap,
+        allowed_clinics_json,
+        id,
+      ]
+    );
+    const { rows } = await pool.query("SELECT * FROM staff WHERE id = $1", [id]);
+    res.json(normalizeStaffRow(rows[0]));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
 
-app.delete("/api/staff/:id", (req, res) => {
+app.delete("/api/staff/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     return res.status(400).json({ error: "invalid staff id" });
   }
-  db.prepare("DELETE FROM staff_date_override WHERE staff_id = ?").run(id);
-  db.prepare("UPDATE shifts SET assigned_staff_id = NULL WHERE assigned_staff_id = ?").run(id);
-  db.prepare("DELETE FROM clinic_day_receptionist_slots WHERE staff_id = ?").run(id);
-  const info = db.prepare("DELETE FROM staff WHERE id = ?").run(id);
-  if (info.changes === 0) return res.status(404).json({ error: "staff not found" });
-  res.status(204).send();
+  try {
+    await pool.query("DELETE FROM staff_date_override WHERE staff_id = $1", [id]);
+    await pool.query("UPDATE shifts SET assigned_staff_id = NULL WHERE assigned_staff_id = $1", [id]);
+    await pool.query("DELETE FROM clinic_day_receptionist_slots WHERE staff_id = $1", [id]);
+    const del = await pool.query("DELETE FROM staff WHERE id = $1", [id]);
+    if (del.rowCount === 0) return res.status(404).json({ error: "staff not found" });
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
 
 function normalizeStaffRow(row) {
   const { availability_json, allowed_clinics_json, ...rest } = row;
+  const avStr = coerceJsonText(availability_json, '{"week1":[],"week2":[]}');
+  const acStr = coerceJsonText(allowed_clinics_json, '{"all":true}');
   return {
     ...rest,
     role: normalizeRole(rest.role),
-    availability: parseAvailabilityJson(availability_json),
-    allowed_clinics: parseAllowedClinicsJson(allowed_clinics_json),
+    availability: parseAvailabilityJson(avStr),
+    allowed_clinics: parseAllowedClinicsJson(acStr),
   };
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-app.get("/api/date-overrides", (_req, res) => {
-  const rows = db.prepare("SELECT staff_id, shift_date, override_type FROM staff_date_override").all();
-  res.json({
-    dateOverrides: rows.map((r) => ({
-      staffId: String(r.staff_id),
-      date: r.shift_date,
-      isAvailable: String(r.override_type) === "available",
-    })),
-  });
+app.get("/api/date-overrides", async (_req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT staff_id, shift_date, override_type FROM staff_date_override");
+    res.json({
+      dateOverrides: rows.map((r) => ({
+        staffId: String(r.staff_id),
+        date: formatDateOverrideDate(r.shift_date),
+        isAvailable: String(r.override_type) === "available",
+      })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
+
+/** Keep YYYY-MM-DD strings even if Postgres `date` columns return Date objects. */
+function formatDateOverrideDate(v) {
+  if (v == null) return v;
+  if (typeof v === "string") return v;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return v.toISOString().slice(0, 10);
+  }
+  return String(v);
+}
 
 /**
  * Replace date overrides for one staff member.
@@ -172,95 +223,105 @@ app.get("/api/date-overrides", (_req, res) => {
  * - If payload contains only isAvailable:false overrides, we replace only 'unavailable' rows (leave available).
  * - If payload contains a mix, we replace both.
  */
-app.put("/api/staff/:id/date-overrides", (req, res) => {
+app.put("/api/staff/:id/date-overrides", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     return res.status(400).json({ error: "invalid staff id" });
   }
-  const existing = db.prepare("SELECT id FROM staff WHERE id = ?").get(id);
-  if (!existing) return res.status(404).json({ error: "staff not found" });
-
   const raw = req.body?.dateOverrides;
   if (!Array.isArray(raw)) {
     return res.status(400).json({ error: "dateOverrides array required" });
   }
 
-  const overrideScopeRaw = String(req.body?.overrideScope ?? "").trim().toLowerCase();
-  const overrideScope =
-    overrideScopeRaw === "available" || overrideScopeRaw === "unavailable" || overrideScopeRaw === "both"
-      ? overrideScopeRaw
-      : null;
+  try {
+    const existingRes = await pool.query("SELECT id FROM staff WHERE id = $1", [id]);
+    if (!existingRes.rows[0]) return res.status(404).json({ error: "staff not found" });
 
-  const availableDates = new Set();
-  const unavailableDates = new Set();
-  let sawTrue = false;
-  let sawFalse = false;
-  for (const o of raw) {
-    const date = String(o?.date ?? "").trim();
-    if (!ISO_DATE_RE.test(date)) continue;
-    const isAvail = o?.isAvailable === false ? false : true;
-    if (isAvail) {
-      sawTrue = true;
-      availableDates.add(date);
-    } else {
-      sawFalse = true;
-      unavailableDates.add(date);
-    }
-  }
+    const overrideScopeRaw = String(req.body?.overrideScope ?? "").trim().toLowerCase();
+    const overrideScope =
+      overrideScopeRaw === "available" || overrideScopeRaw === "unavailable" || overrideScopeRaw === "both"
+        ? overrideScopeRaw
+        : null;
 
-  const tx = db.transaction(() => {
-    const scope = overrideScope ?? (sawTrue && sawFalse ? "both" : sawTrue ? "available" : sawFalse ? "unavailable" : "available");
-    if (scope === "both") {
-      db.prepare("DELETE FROM staff_date_override WHERE staff_id = ?").run(id);
-    } else if (scope === "available") {
-      db.prepare("DELETE FROM staff_date_override WHERE staff_id = ? AND override_type = 'available'").run(id);
-    } else if (scope === "unavailable") {
-      db.prepare("DELETE FROM staff_date_override WHERE staff_id = ? AND override_type = 'unavailable'").run(id);
+    const availableDates = new Set();
+    const unavailableDates = new Set();
+    let sawTrue = false;
+    let sawFalse = false;
+    for (const o of raw) {
+      const date = String(o?.date ?? "").trim();
+      if (!ISO_DATE_RE.test(date)) continue;
+      const isAvail = o?.isAvailable === false ? false : true;
+      if (isAvail) {
+        sawTrue = true;
+        availableDates.add(date);
+      } else {
+        sawFalse = true;
+        unavailableDates.add(date);
+      }
     }
-    const ins = db.prepare(
-      "INSERT OR REPLACE INTO staff_date_override (staff_id, shift_date, override_type) VALUES (?, ?, ?)"
+
+    await withTransaction(async (client) => {
+      const scope =
+        overrideScope ?? (sawTrue && sawFalse ? "both" : sawTrue ? "available" : sawFalse ? "unavailable" : "available");
+      if (scope === "both") {
+        await client.query("DELETE FROM staff_date_override WHERE staff_id = $1", [id]);
+      } else if (scope === "available") {
+        await client.query("DELETE FROM staff_date_override WHERE staff_id = $1 AND override_type = 'available'", [id]);
+      } else if (scope === "unavailable") {
+        await client.query("DELETE FROM staff_date_override WHERE staff_id = $1 AND override_type = 'unavailable'", [id]);
+      }
+      const insSql = `
+        INSERT INTO staff_date_override (staff_id, shift_date, override_type)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (staff_id, shift_date, override_type) DO NOTHING
+      `;
+      for (const d of availableDates) {
+        await client.query(insSql, [id, d, "available"]);
+      }
+      for (const d of unavailableDates) {
+        await client.query(insSql, [id, d, "unavailable"]);
+      }
+    });
+
+    const { rows } = await pool.query(
+      "SELECT staff_id, shift_date, override_type FROM staff_date_override WHERE staff_id = $1",
+      [id]
     );
-    for (const d of availableDates) {
-      ins.run(id, d, "available");
-    }
-    for (const d of unavailableDates) {
-      ins.run(id, d, "unavailable");
-    }
-  });
-  tx();
-
-  const rows = db
-    .prepare("SELECT staff_id, shift_date, override_type FROM staff_date_override WHERE staff_id = ?")
-    .all(id);
-  res.json({
-    dateOverrides: rows.map((r) => ({
-      staffId: String(r.staff_id),
-      date: r.shift_date,
-      isAvailable: String(r.override_type) === "available",
-    })),
-  });
+    res.json({
+      dateOverrides: rows.map((r) => ({
+        staffId: String(r.staff_id),
+        date: formatDateOverrideDate(r.shift_date),
+        isAvailable: String(r.override_type) === "available",
+      })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
 
 // ---------- Shifts (sessions: schedule metadata; no session-level staffing in this engine) ----------
 
-app.get("/api/shifts", (req, res) => {
+app.get("/api/shifts", async (req, res) => {
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: "startDate and endDate query params required" });
   }
-
-  const rows = db
-    .prepare(
+  try {
+    const { rows } = await pool.query(
       `SELECT * FROM shifts
-       WHERE shift_date >= ? AND shift_date <= ?
-       ORDER BY shift_date, clinic, room, doctor, start_time, required_role`
-    )
-    .all(String(startDate), String(endDate));
-
-  res.json(rows.map(augmentShiftRow));
+       WHERE shift_date >= $1 AND shift_date <= $2
+       ORDER BY shift_date, clinic, room, doctor, start_time, required_role`,
+      [String(startDate), String(endDate)]
+    );
+    res.json(rows.map(augmentShiftRow));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
 
-app.post("/api/shifts", (req, res) => {
+app.post("/api/shifts", async (req, res) => {
   const shift_date = resolveShiftDateFromBody(req.body);
   const { start_time, end_time, required_role } = req.body;
   if (!shift_date || !start_time || !end_time) {
@@ -280,55 +341,64 @@ app.post("/api/shifts", (req, res) => {
   }
   const roleTrim = String(required_role ?? "session").trim() || "session";
   try {
-    const info = db
-      .prepare(
-        `INSERT INTO shifts (shift_date, start_time, end_time, required_role, clinic, room, doctor)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(shift_date, start_time, end_time, roleTrim, clinicTrim, roomTrim, doctorTrim);
-    const row = db.prepare("SELECT * FROM shifts WHERE id = ?").get(info.lastInsertRowid);
-    res.status(201).json(augmentShiftRow(row));
-  } catch (e) {
-    if (e.code === "SQLITE_CONSTRAINT_UNIQUE") {
+    const { rows } = await pool.query(
+      `INSERT INTO shifts (shift_date, start_time, end_time, required_role, clinic, room, doctor)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [shift_date, start_time, end_time, roleTrim, clinicTrim, roomTrim, doctorTrim]
+    );
+    res.status(201).json(augmentShiftRow(rows[0]));
+  } catch (err) {
+    if (err.code === "23505") {
       return res.status(409).json({ error: "identical session already exists" });
     }
-    throw e;
+    console.error(err);
+    res.status(500).json({ error: "database error" });
   }
 });
 
-app.delete("/api/shifts/:id", (req, res) => {
+app.delete("/api/shifts/:id", async (req, res) => {
   const id = Number(req.params.id);
-  const info = db.prepare("DELETE FROM shifts WHERE id = ?").run(id);
-  if (info.changes === 0) return res.status(404).json({ error: "shift not found" });
-  res.status(204).send();
+  try {
+    const del = await pool.query("DELETE FROM shifts WHERE id = $1", [id]);
+    if (del.rowCount === 0) return res.status(404).json({ error: "shift not found" });
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
 
-app.get("/api/clinic-day-receptionist-slots", (req, res) => {
+app.get("/api/clinic-day-receptionist-slots", async (req, res) => {
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: "startDate and endDate query params required" });
   }
-  const rows = db
-    .prepare(
+  try {
+    const { rows } = await pool.query(
       `SELECT shift_date, clinic, slot_index, staff_id
        FROM clinic_day_receptionist_slots
-       WHERE shift_date >= ? AND shift_date <= ?
-       ORDER BY shift_date, clinic, slot_index`
-    )
-    .all(String(startDate), String(endDate));
-
-  const byBlock = new Map();
-  for (const r of rows) {
-    const key = `${r.shift_date}\0${r.clinic}`;
-    if (!byBlock.has(key)) {
-      byBlock.set(key, { shift_date: r.shift_date, clinic: r.clinic, slots: [] });
+       WHERE shift_date >= $1 AND shift_date <= $2
+       ORDER BY shift_date, clinic, slot_index`,
+      [String(startDate), String(endDate)]
+    );
+    const byBlock = new Map();
+    for (const r of rows) {
+      const sd = formatDateOverrideDate(r.shift_date);
+      const key = `${sd}\0${r.clinic}`;
+      if (!byBlock.has(key)) {
+        byBlock.set(key, { shift_date: sd, clinic: r.clinic, slots: [] });
+      }
+      byBlock.get(key).slots.push({ slot_index: r.slot_index, staff_id: r.staff_id });
     }
-    byBlock.get(key).slots.push({ slot_index: r.slot_index, staff_id: r.staff_id });
+    res.json({ blocks: [...byBlock.values()] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
   }
-  res.json({ blocks: [...byBlock.values()] });
 });
 
-app.put("/api/clinic-day-receptionist-slots", (req, res) => {
+app.put("/api/clinic-day-receptionist-slots", async (req, res) => {
   const shift_date = String(req.body?.shift_date ?? "").trim();
   const clinic = String(req.body?.clinic ?? "").trim();
   const staffIdsRaw = req.body?.staffIds;
@@ -342,91 +412,114 @@ app.put("/api/clinic-day-receptionist-slots", (req, res) => {
   const staffIds = [];
   for (const x of staffIdsRaw) {
     if (x == null || x === "") continue;
-    const id = Number(x);
-    if (!Number.isFinite(id) || id <= 0) {
+    const sid = Number(x);
+    if (!Number.isFinite(sid) || sid <= 0) {
       return res.status(400).json({ error: "each staff id must be a positive number" });
     }
-    staffIds.push(id);
-  }
-
-  const tx = db.transaction(() => {
-    db.prepare("DELETE FROM clinic_day_receptionist_slots WHERE shift_date = ? AND clinic = ?").run(shift_date, clinic);
-    const ins = db.prepare(
-      `INSERT INTO clinic_day_receptionist_slots (shift_date, clinic, slot_index, staff_id)
-       VALUES (?, ?, ?, ?)`
-    );
-    staffIds.forEach((staffId, idx) => {
-      ins.run(shift_date, clinic, idx, staffId);
-    });
-  });
-  tx();
-  res.json({ ok: true });
-});
-
-app.patch("/api/shifts/:id/assign", (req, res) => {
-  const shiftId = Number(req.params.id);
-  const existing = db.prepare("SELECT * FROM shifts WHERE id = ?").get(shiftId);
-  if (!existing) return res.status(404).json({ error: "shift not found" });
-
-  const raw = req.body?.assigned_staff_id;
-  let staffId = null;
-  if (raw !== undefined && raw !== null && raw !== "") {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n <= 0) {
-      return res.status(400).json({ error: "assigned_staff_id must be null or a positive staff id" });
-    }
-    const st = db.prepare("SELECT id FROM staff WHERE id = ?").get(n);
-    if (!st) return res.status(400).json({ error: "staff not found" });
-    staffId = n;
-  }
-
-  db.prepare("UPDATE shifts SET assigned_staff_id = ? WHERE id = ?").run(staffId, shiftId);
-  const row = db.prepare("SELECT * FROM shifts WHERE id = ?").get(shiftId);
-  res.json(augmentShiftRow(row));
-});
-
-app.patch("/api/shifts/:id", (req, res) => {
-  const shiftId = Number(req.params.id);
-  const existing = db.prepare("SELECT * FROM shifts WHERE id = ?").get(shiftId);
-  if (!existing) return res.status(404).json({ error: "shift not found" });
-
-  const shift_date = pickShiftDateForUpdate(req.body, existing);
-  const start_time = req.body.start_time !== undefined ? req.body.start_time : existing.start_time;
-  const end_time = req.body.end_time !== undefined ? req.body.end_time : existing.end_time;
-  const required_role =
-    req.body.required_role !== undefined ? String(req.body.required_role).trim() : existing.required_role;
-  const clinicRaw = req.body.clinic !== undefined ? String(req.body.clinic).trim() : String(existing.clinic ?? "").trim();
-  const roomRaw = req.body.room !== undefined ? String(req.body.room).trim() : String(existing.room ?? "").trim();
-  const doctorRaw = req.body.doctor !== undefined ? String(req.body.doctor).trim() : String(existing.doctor ?? "").trim();
-  if (!clinicRaw) {
-    return res.status(400).json({ error: "clinic is required" });
-  }
-  if (!roomRaw) {
-    return res.status(400).json({ error: "room is required" });
-  }
-  if (!doctorRaw) {
-    return res.status(400).json({ error: "doctor is required" });
+    staffIds.push(sid);
   }
 
   try {
-    db.prepare(
-      `UPDATE shifts SET shift_date = ?, start_time = ?, end_time = ?, required_role = ?, clinic = ?, room = ?, doctor = ? WHERE id = ?`
-    ).run(shift_date, start_time, end_time, required_role, clinicRaw, roomRaw, doctorRaw, shiftId);
-  } catch (e) {
-    if (e.code === "SQLITE_CONSTRAINT_UNIQUE") {
-      return res.status(409).json({ error: "identical session already exists" });
-    }
-    throw e;
+    await withTransaction(async (client) => {
+      await client.query("DELETE FROM clinic_day_receptionist_slots WHERE shift_date = $1 AND clinic = $2", [
+        shift_date,
+        clinic,
+      ]);
+      const ins = `INSERT INTO clinic_day_receptionist_slots (shift_date, clinic, slot_index, staff_id)
+                   VALUES ($1, $2, $3, $4)`;
+      for (let idx = 0; idx < staffIds.length; idx++) {
+        await client.query(ins, [shift_date, clinic, idx, staffIds[idx]]);
+      }
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
   }
-  const row = db.prepare("SELECT * FROM shifts WHERE id = ?").get(shiftId);
-  res.json(augmentShiftRow(row));
+});
+
+app.patch("/api/shifts/:id/assign", async (req, res) => {
+  const shiftId = Number(req.params.id);
+  try {
+    const existingRes = await pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]);
+    const existing = existingRes.rows[0];
+    if (!existing) return res.status(404).json({ error: "shift not found" });
+
+    const raw = req.body?.assigned_staff_id;
+    let staffId = null;
+    if (raw !== undefined && raw !== null && raw !== "") {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) {
+        return res.status(400).json({ error: "assigned_staff_id must be null or a positive staff id" });
+      }
+      const stRes = await pool.query("SELECT id FROM staff WHERE id = $1", [n]);
+      if (!stRes.rows[0]) return res.status(400).json({ error: "staff not found" });
+      staffId = n;
+    }
+
+    await pool.query("UPDATE shifts SET assigned_staff_id = $1 WHERE id = $2", [staffId, shiftId]);
+    const { rows } = await pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]);
+    res.json(augmentShiftRow(rows[0]));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
+});
+
+app.patch("/api/shifts/:id", async (req, res) => {
+  const shiftId = Number(req.params.id);
+  try {
+    const existingRes = await pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]);
+    const existing = existingRes.rows[0];
+    if (!existing) return res.status(404).json({ error: "shift not found" });
+
+    const shift_date = pickShiftDateForUpdate(req.body, existing);
+    const start_time = req.body.start_time !== undefined ? req.body.start_time : existing.start_time;
+    const end_time = req.body.end_time !== undefined ? req.body.end_time : existing.end_time;
+    const required_role =
+      req.body.required_role !== undefined ? String(req.body.required_role).trim() : existing.required_role;
+    const clinicRaw = req.body.clinic !== undefined ? String(req.body.clinic).trim() : String(existing.clinic ?? "").trim();
+    const roomRaw = req.body.room !== undefined ? String(req.body.room).trim() : String(existing.room ?? "").trim();
+    const doctorRaw = req.body.doctor !== undefined ? String(req.body.doctor).trim() : String(existing.doctor ?? "").trim();
+    if (!clinicRaw) {
+      return res.status(400).json({ error: "clinic is required" });
+    }
+    if (!roomRaw) {
+      return res.status(400).json({ error: "room is required" });
+    }
+    if (!doctorRaw) {
+      return res.status(400).json({ error: "doctor is required" });
+    }
+
+    try {
+      await pool.query(
+        `UPDATE shifts SET shift_date = $1, start_time = $2, end_time = $3, required_role = $4, clinic = $5, room = $6, doctor = $7 WHERE id = $8`,
+        [shift_date, start_time, end_time, required_role, clinicRaw, roomRaw, doctorRaw, shiftId]
+      );
+    } catch (err) {
+      if (err.code === "23505") {
+        return res.status(409).json({ error: "identical session already exists" });
+      }
+      throw err;
+    }
+    const { rows } = await pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]);
+    res.json(augmentShiftRow(rows[0]));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
 });
 
 function augmentShiftRow(row) {
   if (!row) return row;
+  const shift_date =
+    row.shift_date instanceof Date && !Number.isNaN(row.shift_date.getTime())
+      ? row.shift_date.toISOString().slice(0, 10)
+      : row.shift_date;
   return {
     ...row,
-    date: row.shift_date,
+    shift_date,
+    date: shift_date,
   };
 }
 
