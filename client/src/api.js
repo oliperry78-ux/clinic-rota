@@ -10,6 +10,26 @@ function apiUrl(path) {
   return `${API_BASE}${p}`;
 }
 
+function parseJsonBody(text) {
+  if (!text) return null;
+  const t = text.trimStart();
+  if (
+    t.startsWith("<!DOCTYPE") ||
+    t.startsWith("<!doctype") ||
+    t.startsWith("<html") ||
+    (t.startsWith("<") && !t.startsWith("{") && !t.startsWith("["))
+  ) {
+    const err = new Error("API returned HTML instead of JSON.");
+    err.isHtmlResponse = true;
+    throw err;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("Invalid JSON from API");
+  }
+}
+
 async function request(path, options = {}) {
   const res = await fetch(apiUrl(path), {
     headers: { "Content-Type": "application/json", ...options.headers },
@@ -17,7 +37,7 @@ async function request(path, options = {}) {
   });
   if (res.status === 204) return null;
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseJsonBody(text);
   if (!res.ok) {
     const msg = data?.error || res.statusText;
     throw new Error(msg);
@@ -26,6 +46,9 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  getSettings: () => request("/api/settings"),
+  putSettings: (body) => request("/api/settings", { method: "PUT", body: JSON.stringify(body) }),
+
   getStaff: () => request("/api/staff"),
   createStaff: (body) => request("/api/staff", { method: "POST", body: JSON.stringify(body) }),
   updateStaff: (id, body) => request(`/api/staff/${id}`, { method: "PUT", body: JSON.stringify(body) }),

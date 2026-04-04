@@ -10,4 +10,10 @@ export default defineConfig({
       "/api": "http://localhost:3001",
     },
   },
+  // `vite preview` does not inherit `server.proxy` — without this, `/api/*` hits the static preview server (HTML).
+  preview: {
+    proxy: {
+      "/api": "http://localhost:3001",
+    },
+  },
 });

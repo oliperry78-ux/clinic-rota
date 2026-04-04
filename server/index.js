@@ -73,6 +73,57 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+const BIWEEK_ANCHOR_KEY = "biweek_week1_anchor_date";
+const DEFAULT_BIWEEK_ANCHOR = "2000-01-03";
+
+/** Normalize any YYYY-MM-DD to the UTC Monday starting that calendar week (same rule as client biweek). */
+function normalizeBiweekWeek1AnchorIso(raw) {
+  const s = String(raw ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return DEFAULT_BIWEEK_ANCHOR;
+  const [y, mo, d] = s.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return DEFAULT_BIWEEK_ANCHOR;
+  const dayMs = Date.UTC(y, mo - 1, d);
+  const dow = new Date(dayMs).getUTCDay();
+  const mondayOffset = (dow + 6) % 7;
+  const mondayMs = dayMs - mondayOffset * 86400000;
+  const dt = new Date(mondayMs);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+}
+
+app.get("/api/settings", async (_req, res) => {
+  try {
+    await pool.query(`INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, [
+      BIWEEK_ANCHOR_KEY,
+      DEFAULT_BIWEEK_ANCHOR,
+    ]);
+    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = $1`, [BIWEEK_ANCHOR_KEY]);
+    const raw = rows[0]?.value ?? DEFAULT_BIWEEK_ANCHOR;
+    res.json({ biweekWeek1AnchorDate: normalizeBiweekWeek1AnchorIso(raw) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
+});
+
+app.put("/api/settings", async (req, res) => {
+  const incoming = String(req.body?.biweekWeek1AnchorDate ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(incoming)) {
+    return res.status(400).json({ error: "biweekWeek1AnchorDate (YYYY-MM-DD) required" });
+  }
+  const normalized = normalizeBiweekWeek1AnchorIso(incoming);
+  try {
+    await pool.query(
+      `INSERT INTO app_settings (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [BIWEEK_ANCHOR_KEY, normalized]
+    );
+    res.json({ biweekWeek1AnchorDate: normalized });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
+});
+
 // ---------- Staff ----------
 
 app.get("/api/staff", async (_req, res) => {

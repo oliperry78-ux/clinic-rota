@@ -1,22 +1,12 @@
+import { biweekCycleIndexFromIsoDate } from "./biweekAnchor.js";
+
 /** Match server `scheduling.js` weekday from ISO date (UTC). */
 export function dateStringToDayOfWeek(isoDate) {
   const [y, mo, d] = isoDate.split("-").map(Number);
   return new Date(Date.UTC(y, mo - 1, d)).getUTCDay();
 }
 
-const BIWEEK_EPOCH_MONDAY_UTC_MS = Date.UTC(2000, 0, 3);
-
-/** 0 = week 1 pattern, 1 = week 2 pattern — same rule as server `biweekCycleIndexFromIsoDate`. */
-export function biweekCycleIndexFromIsoDate(isoDate) {
-  const [y, mo, d] = String(isoDate).split("-").map(Number);
-  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return 0;
-  const dayMs = Date.UTC(y, mo - 1, d);
-  const dow = new Date(dayMs).getUTCDay();
-  const mondayOffset = (dow + 6) % 7;
-  const mondayMs = dayMs - mondayOffset * 24 * 60 * 60 * 1000;
-  const weeks = Math.floor((mondayMs - BIWEEK_EPOCH_MONDAY_UTC_MS) / (7 * 24 * 60 * 60 * 1000));
-  return ((weeks % 2) + 2) % 2;
-}
+export { biweekCycleIndexFromIsoDate };
 
 function normalizeStaffAvailabilityShape(av) {
   if (Array.isArray(av)) return { week1: av, week2: av };

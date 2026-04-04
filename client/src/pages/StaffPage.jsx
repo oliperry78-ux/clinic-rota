@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
 
 /** Human labels matching JS getDay(): 0 = Sunday … 6 = Saturday */
 const DAY_ROWS = [
@@ -184,6 +185,7 @@ function AvailabilityEditor({ rows, onChange }) {
 }
 
 export default function StaffPage() {
+  const { anchorIso } = useBiweekAnchor();
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -342,6 +344,13 @@ export default function StaffPage() {
         <p style={{ margin: "0 0 0.75rem", fontSize: "0.9rem", color: "var(--muted)" }}>
           Set two repeating weekly patterns (Week 1 and Week 2) that alternate every calendar week. The rota
           only allows assignments inside the matching week&apos;s windows for each session date.
+          {anchorIso ? (
+            <>
+              {" "}
+              Which pattern applies to a given week follows <strong>Week 1 starts</strong> in the header (UTC
+              Monday <code style={{ fontSize: "0.85em" }}>{anchorIso}</code>).
+            </>
+          ) : null}
         </p>
         <form onSubmit={handleCreate}>
           <div className="form-row">

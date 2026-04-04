@@ -1,4 +1,5 @@
 import { NavLink, Route, Routes } from "react-router-dom";
+import { BiweekAnchorBar } from "./BiweekAnchorContext.jsx";
 import StaffPage from "./pages/StaffPage.jsx";
 import WeekShiftsPage from "./pages/WeekShiftsPage.jsx";
 import RotaPage from "./pages/RotaPage.jsx";
@@ -29,6 +30,7 @@ export default function App() {
           </NavLink>
         </nav>
       </header>
+      <BiweekAnchorBar />
       <main className="main">
         <Routes>
           <Route path="/" element={<StaffPage />} />

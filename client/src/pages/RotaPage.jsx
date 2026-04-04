@@ -11,6 +11,8 @@ import {
 } from "../rotaPersistence.js";
 import { generateReceptionistCombinations } from "../receptionistCombinations.js";
 import { eligibleAssistantsForSession, eligibleReceptionistsForBlock } from "../rotaEligibility.js";
+import { biweekCycleIndexFromIsoDate } from "../biweekAnchor.js";
+import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
 import { toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
 
 function timeToMinutes(t) {
@@ -68,10 +70,13 @@ function assistantAssignmentDisplayState(assignedId, eligibleAssistants) {
 }
 
 export default function RotaPage() {
+  const { anchorIso } = useBiweekAnchor();
   const today = toISODate(new Date());
   const [weekAnchor, setWeekAnchor] = useState(today);
   const { startISO, endISO } = weekRangeFromAnyDate(weekAnchor);
   const days = weekDaysISO(startISO);
+  const rotaWeekCycleLabel =
+    biweekCycleIndexFromIsoDate(startISO) === 0 ? "Week 1 pattern" : "Week 2 pattern";
 
   const [staff, setStaff] = useState([]);
   const [dateOverrides, setDateOverrides] = useState([]);
@@ -563,6 +568,13 @@ export default function RotaPage() {
           </label>
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
             {startISO} → {endISO}
+            {anchorIso ? (
+              <>
+                {" "}
+                · <strong style={{ color: "var(--text)" }}>{rotaWeekCycleLabel}</strong> (anchor{" "}
+                <code style={{ fontSize: "0.82em" }}>{anchorIso}</code>)
+              </>
+            ) : null}
           </span>
           <span
             style={{
