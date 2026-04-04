@@ -164,7 +164,10 @@ app.delete("/api/staff/:id", async (req, res) => {
   }
   try {
     await pool.query("DELETE FROM staff_date_override WHERE staff_id = $1", [id]);
-    await pool.query("UPDATE shifts SET assigned_staff_id = NULL WHERE assigned_staff_id = $1", [id]);
+    await pool.query(
+      "UPDATE shifts SET assigned_staff_id = NULL, assigned_staff_manual_override = FALSE WHERE assigned_staff_id = $1",
+      [id]
+    );
     await pool.query("DELETE FROM clinic_day_receptionist_slots WHERE staff_id = $1", [id]);
     const del = await pool.query("DELETE FROM staff WHERE id = $1", [id]);
     if (del.rowCount === 0) return res.status(404).json({ error: "staff not found" });
@@ -376,7 +379,7 @@ app.get("/api/clinic-day-receptionist-slots", async (req, res) => {
   }
   try {
     const { rows } = await pool.query(
-      `SELECT shift_date, clinic, slot_index, staff_id
+      `SELECT shift_date, clinic, slot_index, staff_id, COALESCE(manual_override, FALSE) AS manual_override
        FROM clinic_day_receptionist_slots
        WHERE shift_date >= $1 AND shift_date <= $2
        ORDER BY shift_date, clinic, slot_index`,
@@ -389,7 +392,11 @@ app.get("/api/clinic-day-receptionist-slots", async (req, res) => {
       if (!byBlock.has(key)) {
         byBlock.set(key, { shift_date: sd, clinic: r.clinic, slots: [] });
       }
-      byBlock.get(key).slots.push({ slot_index: r.slot_index, staff_id: r.staff_id });
+      byBlock.get(key).slots.push({
+        slot_index: r.slot_index,
+        staff_id: r.staff_id,
+        manual_override: Boolean(r.manual_override),
+      });
     }
     res.json({ blocks: [...byBlock.values()] });
   } catch (err) {
@@ -419,16 +426,22 @@ app.put("/api/clinic-day-receptionist-slots", async (req, res) => {
     staffIds.push(sid);
   }
 
+  const manualRaw = req.body?.manualOverrides;
+  const manualFlags = Array.isArray(manualRaw)
+    ? manualRaw.map((v) => v === true || v === "true")
+    : null;
+
   try {
     await withTransaction(async (client) => {
       await client.query("DELETE FROM clinic_day_receptionist_slots WHERE shift_date = $1 AND clinic = $2", [
         shift_date,
         clinic,
       ]);
-      const ins = `INSERT INTO clinic_day_receptionist_slots (shift_date, clinic, slot_index, staff_id)
-                   VALUES ($1, $2, $3, $4)`;
+      const ins = `INSERT INTO clinic_day_receptionist_slots (shift_date, clinic, slot_index, staff_id, manual_override)
+                   VALUES ($1, $2, $3, $4, $5)`;
       for (let idx = 0; idx < staffIds.length; idx++) {
-        await client.query(ins, [shift_date, clinic, idx, staffIds[idx]]);
+        const mo = Boolean(manualFlags && manualFlags[idx] === true);
+        await client.query(ins, [shift_date, clinic, idx, staffIds[idx], mo]);
       }
     });
     res.json({ ok: true });
@@ -457,7 +470,17 @@ app.patch("/api/shifts/:id/assign", async (req, res) => {
       staffId = n;
     }
 
-    await pool.query("UPDATE shifts SET assigned_staff_id = $1 WHERE id = $2", [staffId, shiftId]);
+    let manualOverride = Boolean(existing.assigned_staff_manual_override);
+    if (staffId === null) {
+      manualOverride = false;
+    } else if (req.body?.assigned_staff_manual_override !== undefined && req.body?.assigned_staff_manual_override !== null) {
+      manualOverride = Boolean(req.body.assigned_staff_manual_override);
+    }
+
+    await pool.query(
+      "UPDATE shifts SET assigned_staff_id = $1, assigned_staff_manual_override = $2 WHERE id = $3",
+      [staffId, manualOverride, shiftId]
+    );
     const { rows } = await pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]);
     res.json(augmentShiftRow(rows[0]));
   } catch (err) {

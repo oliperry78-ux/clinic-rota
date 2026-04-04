@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { computeClinicDaySummary, formatRequiredCapacity } from "../clinicDay.js";
-import { computeCopyForwardAssignments } from "../rotaCopyForward.js";
-import { mergeReceptionistStateForDateRange, receptionistSelectionMapFromApiPayload } from "../rotaPersistence.js";
+import { computeCopyForwardAssignments, parseReceptionistLabelToStaffIds } from "../rotaCopyForward.js";
+import {
+  mergeReceptionistStateForDateRange,
+  receptionistSelectionMapFromApiPayload,
+  receptionistManualOverrideMapFromApiPayload,
+  mergeReceptionistManualOverrideForDateRange,
+  receptionistLabelFromOrderedStaffIds,
+} from "../rotaPersistence.js";
 import { generateReceptionistCombinations } from "../receptionistCombinations.js";
 import { eligibleAssistantsForSession, eligibleReceptionistsForBlock } from "../rotaEligibility.js";
 import { toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
@@ -72,6 +78,8 @@ export default function RotaPage() {
   const [shifts, setShifts] = useState([]);
   const [error, setError] = useState(null);
   const [selectedReceptionistByBlock, setSelectedReceptionistByBlock] = useState({});
+  const [receptionistManualOverrideByBlock, setReceptionistManualOverrideByBlock] = useState({});
+  const [manualRxPickIds, setManualRxPickIds] = useState([]);
   const [activePopup, setActivePopup] = useState(null);
   const [popupFixedPos, setPopupFixedPos] = useState(null);
   const [copyForwardBusy, setCopyForwardBusy] = useState(false);
@@ -92,7 +100,11 @@ export default function RotaPage() {
       setDateOverrides(ov?.dateOverrides ?? []);
       setShifts(shList);
       const loadedRx = receptionistSelectionMapFromApiPayload(rxPayload, sList);
+      const loadedRxManual = receptionistManualOverrideMapFromApiPayload(rxPayload);
       setSelectedReceptionistByBlock((prev) => mergeReceptionistStateForDateRange(prev, loadedRx, startISO, endISO));
+      setReceptionistManualOverrideByBlock((prev) =>
+        mergeReceptionistManualOverrideForDateRange(prev, loadedRxManual, startISO, endISO)
+      );
     } catch (e) {
       setError(e.message);
     }
@@ -108,7 +120,23 @@ export default function RotaPage() {
     popupAnchorEditRef.current = null;
     setPopupFixedPos(null);
     setCopyForwardFreq("");
+    setManualRxPickIds([]);
   }, [startISO, endISO]);
+
+  useEffect(() => {
+    if (!activePopup || activePopup.type !== "receptionist") {
+      setManualRxPickIds([]);
+      return;
+    }
+    const rk = `${activePopup.iso}\0${activePopup.clinicName}`;
+    if (receptionistManualOverrideByBlock[rk]) {
+      const label = selectedReceptionistByBlock[rk];
+      const ids = label ? parseReceptionistLabelToStaffIds(label, staff) : null;
+      setManualRxPickIds(Array.isArray(ids) && ids.length ? ids : []);
+    } else {
+      setManualRxPickIds([]);
+    }
+  }, [activePopup, receptionistManualOverrideByBlock, selectedReceptionistByBlock, staff]);
 
   useEffect(() => {
     if (!activePopup) {
@@ -306,8 +334,10 @@ export default function RotaPage() {
         shift_date: isoDate,
         clinic: clinicName,
         staffIds,
+        manualOverrides: staffIds.map(() => false),
       });
       setSelectedReceptionistByBlock((prev) => ({ ...prev, [key]: combo.label }));
+      setReceptionistManualOverrideByBlock((prev) => ({ ...prev, [key]: false }));
     } catch (e) {
       setError(e.message);
     }
@@ -327,16 +357,73 @@ export default function RotaPage() {
         delete next[key];
         return next;
       });
+      setReceptionistManualOverrideByBlock((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     } catch (e) {
       setError(e.message);
     }
   }
 
-  async function assignAssistant(sessionId, staffId) {
+  async function applyManualReceptionistSelection(isoDate, clinicName) {
+    const key = blockKeyFor(isoDate, clinicName);
     setError(null);
     try {
-      await api.assignShiftStaff(sessionId, staffId);
-      setShifts((prev) => prev.map((s) => (s.id === sessionId ? { ...s, assigned_staff_id: staffId } : s)));
+      if (manualRxPickIds.length === 0) {
+        await api.putClinicDayReceptionistSlots({
+          shift_date: isoDate,
+          clinic: clinicName,
+          staffIds: [],
+        });
+        setSelectedReceptionistByBlock((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setReceptionistManualOverrideByBlock((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        return;
+      }
+      const staffIds = [...manualRxPickIds];
+      const label = receptionistLabelFromOrderedStaffIds(staffIds, staff);
+      await api.putClinicDayReceptionistSlots({
+        shift_date: isoDate,
+        clinic: clinicName,
+        staffIds,
+        manualOverrides: staffIds.map(() => true),
+      });
+      setSelectedReceptionistByBlock((prev) => ({ ...prev, [key]: label }));
+      setReceptionistManualOverrideByBlock((prev) => ({ ...prev, [key]: true }));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  function toggleManualRxPick(staffId) {
+    const id = Number(staffId);
+    setManualRxPickIds((prev) => {
+      const has = prev.includes(id);
+      if (has) return prev.filter((x) => x !== id);
+      return [...prev, id];
+    });
+  }
+
+  async function assignAssistant(sessionId, staffId, manualOverride = false) {
+    setError(null);
+    try {
+      await api.assignShiftStaff(sessionId, staffId, { assigned_staff_manual_override: manualOverride });
+      setShifts((prev) =>
+        prev.map((s) =>
+          s.id === sessionId
+            ? { ...s, assigned_staff_id: staffId, assigned_staff_manual_override: manualOverride }
+            : s
+        )
+      );
     } catch (e) {
       setError(e.message);
     }
@@ -345,8 +432,12 @@ export default function RotaPage() {
   async function unassignAssistant(sessionId) {
     setError(null);
     try {
-      await api.assignShiftStaff(sessionId, null);
-      setShifts((prev) => prev.map((s) => (s.id === sessionId ? { ...s, assigned_staff_id: null } : s)));
+      await api.assignShiftStaff(sessionId, null, { assigned_staff_manual_override: false });
+      setShifts((prev) =>
+        prev.map((s) =>
+          s.id === sessionId ? { ...s, assigned_staff_id: null, assigned_staff_manual_override: false } : s
+        )
+      );
     } catch (e) {
       setError(e.message);
     }
@@ -357,18 +448,20 @@ export default function RotaPage() {
     setCopyForwardBusy(true);
     setError(null);
     try {
-      const { receptionist, receptionistSlots, assistants } = await computeCopyForwardAssignments({
-        api,
-        staff,
-        sourceStartISO: startISO,
-        sourceEndISO: endISO,
-        sourceDays: days,
-        sourceByDateAndClinic: byDateAndClinic,
-        selectedReceptionistByBlock,
-        getShiftAssignedAssistantId: getAssignedAssistantId,
-        mode,
-        dateOverrides,
-      });
+      const { receptionist, receptionistSlots, receptionistSlotManualOverrides, assistants } =
+        await computeCopyForwardAssignments({
+          api,
+          staff,
+          sourceStartISO: startISO,
+          sourceEndISO: endISO,
+          sourceDays: days,
+          sourceByDateAndClinic: byDateAndClinic,
+          selectedReceptionistByBlock,
+          receptionistManualOverrideByBlock,
+          getShiftAssignedAssistantId: getAssignedAssistantId,
+          mode,
+          dateOverrides,
+        });
       const rxKeys = Object.keys(receptionist);
       const asKeys = Object.keys(assistants).map(Number);
       console.log("[copy-forward] RotaPage merging state", {
@@ -380,12 +473,25 @@ export default function RotaPage() {
         const i = blockKey.indexOf("\0");
         const shift_date = blockKey.slice(0, i);
         const clinic = blockKey.slice(i + 1);
-        return api.putClinicDayReceptionistSlots({ shift_date, clinic, staffIds });
+        const mo = receptionistSlotManualOverrides?.[blockKey];
+        const body = { shift_date, clinic, staffIds };
+        if (Array.isArray(mo) && mo.length === staffIds.length) body.manualOverrides = mo;
+        return api.putClinicDayReceptionistSlots(body);
       });
-      const asPersist = Object.entries(assistants).map(([sid, aid]) => api.assignShiftStaff(Number(sid), aid));
+      const asPersist = Object.entries(assistants).map(([sid, aid]) =>
+        api.assignShiftStaff(Number(sid), aid, { assigned_staff_manual_override: false })
+      );
       await Promise.all([...rxPersist, ...asPersist]);
 
       setSelectedReceptionistByBlock((prev) => ({ ...prev, ...receptionist }));
+      setReceptionistManualOverrideByBlock((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(receptionist)) {
+          const flags = receptionistSlotManualOverrides?.[k];
+          next[k] = Array.isArray(flags) && flags.some(Boolean);
+        }
+        return next;
+      });
       const shList = await api.getShifts(startISO, endISO);
       setShifts(shList);
       setCopyForwardFreq("");
@@ -535,6 +641,9 @@ export default function RotaPage() {
                             {receptionistDisplayState === "assigned" ? (
                               <span className={receptionistInvalid ? "rota-assignment-invalid" : undefined}>
                                 {selectedComboLabel}
+                                {receptionistManualOverrideByBlock[key] ? (
+                                  <span className="rota-manual-override-label"> (manual override)</span>
+                                ) : null}
                                 {receptionistInvalid ? " (unavailable)" : ""}
                               </span>
                             ) : receptionistDisplayState === "gap" ? (
@@ -585,6 +694,9 @@ export default function RotaPage() {
                                     {assistantDisplayState === "assigned" ? (
                                       <span className={assistantInvalid ? "rota-assignment-invalid" : undefined}>
                                         {assigned?.name ?? `Staff #${assignedId}`}
+                                        {s.assigned_staff_manual_override ? (
+                                          <span className="rota-manual-override-label"> (manual override)</span>
+                                        ) : null}
                                         {assistantInvalid ? " (unavailable)" : ""}
                                       </span>
                                     ) : assistantDisplayState === "gap" ? (
@@ -749,11 +861,65 @@ export default function RotaPage() {
                         .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
                         .map((p) => (
                           <li key={`rx-unavail-${p.id}`} className="rota-popup-row">
+                            <span className="rota-avail-dot rota-avail-no" title="Unavailable" aria-hidden />
                             <span>{p.name}</span>
                           </li>
                         ))}
                     </ul>
                   )}
+
+                  {summary.required_capacity > 0 ? (
+                    <>
+                      <div className="meta" style={{ fontSize: "0.75rem", marginTop: "0.5rem", marginBottom: "0.2rem" }}>
+                        Manual override
+                      </div>
+                      <p className="meta" style={{ margin: "0 0 0.35rem", fontSize: "0.72rem" }}>
+                        Pick any receptionists (any count). Green = available for this window; red = not. GAP still applies
+                        if coverage does not meet required capacity ({formatRequiredCapacity(summary.required_capacity)}).
+                      </p>
+                      <ul className="rota-popup-list">
+                        {staff
+                          .filter((p) => String(p.role || "").trim().toLowerCase() === "receptionist")
+                          .slice()
+                          .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+                          .map((p) => {
+                            const avail = eligibleReceptionistIds.has(Number(p.id));
+                            return (
+                              <li key={`rx-manual-${p.id}`} className="rota-popup-row">
+                                <span
+                                  className={`rota-avail-dot ${avail ? "rota-avail-yes" : "rota-avail-no"}`}
+                                  title={avail ? "Available" : "Unavailable"}
+                                  aria-hidden
+                                />
+                                <label
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: "0.35rem",
+                                    flex: 1,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={manualRxPickIds.includes(Number(p.id))}
+                                    onChange={() => toggleManualRxPick(p.id)}
+                                  />
+                                  {p.name}
+                                </label>
+                              </li>
+                            );
+                          })}
+                      </ul>
+                      <button
+                        type="button"
+                        style={{ marginTop: "0.35rem" }}
+                        onClick={() => void applyManualReceptionistSelection(iso, clinicName)}
+                      >
+                        Save manual override
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               );
             }
@@ -795,6 +961,9 @@ export default function RotaPage() {
                         <div className="rota-popup-row rota-assignment-invalid" style={{ marginBottom: "0.35rem" }}>
                           <span>
                             {assignedAssistant.name} (unavailable)
+                            {s.assigned_staff_manual_override ? (
+                              <span className="rota-manual-override-label"> · manual override</span>
+                            ) : null}
                           </span>
                           <button type="button" className="secondary" onClick={() => void unassignAssistant(s.id)}>
                             Unassign
@@ -816,10 +985,16 @@ export default function RotaPage() {
                                   : "rota-popup-row"
                               }
                             >
+                              <span className="rota-avail-dot rota-avail-yes" title="Available" aria-hidden />
                               <span>{a.name}</span>
                               {Number(assignedAssistantId) === Number(a.id) ? (
                                 <>
                                   <span className="rota-assigned-chip">Assigned</span>
+                                  {s.assigned_staff_manual_override ? (
+                                    <span className="rota-assigned-chip" style={{ background: "rgba(124,58,237,0.15)", color: "#5b21b6" }}>
+                                      Manual
+                                    </span>
+                                  ) : null}
                                   <button type="button" className="secondary" onClick={() => void unassignAssistant(s.id)}>
                                     Unassign
                                   </button>
@@ -851,7 +1026,11 @@ export default function RotaPage() {
                             .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
                             .map((p) => (
                               <li key={`as-unavail-${p.id}`} className="rota-popup-row">
+                                <span className="rota-avail-dot rota-avail-no" title="Unavailable" aria-hidden />
                                 <span>{p.name}</span>
+                                <button type="button" onClick={() => void assignAssistant(s.id, p.id, true)}>
+                                  Override
+                                </button>
                               </li>
                             ))}
                         </ul>

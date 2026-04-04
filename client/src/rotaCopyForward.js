@@ -46,7 +46,7 @@ function blockKeyFor(isoDate, clinicName) {
 }
 
 /** Recover staff ids from a combo label when the combo is no longer in the generated list (still persisted). */
-function parseReceptionistLabelToStaffIds(label, staffList) {
+export function parseReceptionistLabelToStaffIds(label, staffList) {
   if (!label || !staffList?.length) return null;
   const segments = String(label)
     .split(" + ")
@@ -188,7 +188,7 @@ function groupShiftsByDate(shifts) {
 /**
  * @param {object} params
  * @param {"weekly"|"biweekly"} params.mode
- * @returns {Promise<{ receptionist: Record<string,string>, receptionistSlots: Record<string, number[]>, assistants: Record<number,number> }>}
+ * @returns {Promise<{ receptionist: Record<string,string>, receptionistSlots: Record<string, number[]>, receptionistSlotManualOverrides: Record<string, boolean[]>, assistants: Record<number,number> }>}
  */
 export async function computeCopyForwardAssignments({
   api,
@@ -198,6 +198,7 @@ export async function computeCopyForwardAssignments({
   sourceDays,
   sourceByDateAndClinic,
   selectedReceptionistByBlock,
+  receptionistManualOverrideByBlock = {},
   getShiftAssignedAssistantId,
   mode,
   horizonDays = 800,
@@ -219,6 +220,7 @@ export async function computeCopyForwardAssignments({
 
   const receptionistUpdates = {};
   const receptionistSlotUpdates = {};
+  const receptionistSlotManualOverrides = {};
   const assistantsUpdates = {};
 
   const rxTemplates = [];
@@ -239,6 +241,7 @@ export async function computeCopyForwardAssignments({
           ? combo.contributions.map((x) => Number(x.staffId))
           : parseReceptionistLabelToStaffIds(label, staff);
         if (staffIds?.length) {
+          const manualBlock = Boolean(receptionistManualOverrideByBlock[key]);
           rxTemplates.push({
             weekdayMon0: dow,
             clinic: clinicName,
@@ -247,6 +250,7 @@ export async function computeCopyForwardAssignments({
             required_capacity: summary.required_capacity,
             label,
             staffIds,
+            manualOverrides: staffIds.map(() => manualBlock),
           });
         }
       }
@@ -269,7 +273,12 @@ export async function computeCopyForwardAssignments({
 
   if (rxTemplates.length === 0 && asTemplates.length === 0) {
     console.log("[copy-forward] no source templates (nothing to copy)");
-    return { receptionist: receptionistUpdates, receptionistSlots: receptionistSlotUpdates, assistants: assistantsUpdates };
+    return {
+      receptionist: receptionistUpdates,
+      receptionistSlots: receptionistSlotUpdates,
+      receptionistSlotManualOverrides,
+      assistants: assistantsUpdates,
+    };
   }
 
   console.log("[copy-forward] source templates", { receptionistBlocks: rxTemplates.length, sessionsWithAssistant: asTemplates.length });
@@ -300,6 +309,7 @@ export async function computeCopyForwardAssignments({
           key: blockKeyFor(iso, clinicName),
           label: tmpl.label,
           staffIds: tmpl.staffIds,
+          manualOverrides: tmpl.manualOverrides,
           iso,
         });
       }
@@ -378,6 +388,9 @@ export async function computeCopyForwardAssignments({
         rxWorking[c.key] = c.label;
         receptionistUpdates[c.key] = c.label;
         receptionistSlotUpdates[c.key] = c.staffIds;
+        if (Array.isArray(c.manualOverrides) && c.manualOverrides.length === c.staffIds.length) {
+          receptionistSlotManualOverrides[c.key] = c.manualOverrides;
+        }
       }
     }
 
@@ -426,6 +439,7 @@ export async function computeCopyForwardAssignments({
   return {
     receptionist: receptionistUpdates,
     receptionistSlots: receptionistSlotUpdates,
+    receptionistSlotManualOverrides,
     assistants: assistantsUpdates,
   };
 }

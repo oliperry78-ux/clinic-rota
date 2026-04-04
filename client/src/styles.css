@@ -605,6 +605,28 @@ button.rota-edit-link:focus-visible {
   font-weight: 600;
 }
 
+.rota-avail-dot {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rota-avail-yes {
+  background: #22c55e;
+}
+
+.rota-avail-no {
+  background: #dc2626;
+}
+
+.rota-manual-override-label {
+  color: #6d28d9;
+  font-weight: 600;
+  font-size: 0.85em;
+}
+
 /* —— Date availability (per-staff calendar overrides) —— */
 .date-availability-intro {
   margin: 0 0 1rem;

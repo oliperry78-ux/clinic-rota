@@ -50,9 +50,14 @@ export const api = {
     ),
   putClinicDayReceptionistSlots: (body) =>
     request("/api/clinic-day-receptionist-slots", { method: "PUT", body: JSON.stringify(body) }),
-  assignShiftStaff: (shiftId, assignedStaffId) =>
-    request(`/api/shifts/${shiftId}/assign`, {
+  assignShiftStaff: (shiftId, assignedStaffId, assignOptions = {}) => {
+    const body = { assigned_staff_id: assignedStaffId };
+    if (typeof assignOptions.assigned_staff_manual_override === "boolean") {
+      body.assigned_staff_manual_override = assignOptions.assigned_staff_manual_override;
+    }
+    return request(`/api/shifts/${shiftId}/assign`, {
       method: "PATCH",
-      body: JSON.stringify({ assigned_staff_id: assignedStaffId }),
-    }),
+      body: JSON.stringify(body),
+    });
+  },
 };
