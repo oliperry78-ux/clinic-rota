@@ -1,5 +1,6 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { BiweekAnchorBar } from "./BiweekAnchorContext.jsx";
+import { isTempDateAvailabilityPath, ManagerLoginScreen, useManagerAuth } from "./ManagerAuthContext.jsx";
 import { TempIsolationRedirect, useTempIsolation } from "./TempIsolationContext.jsx";
 import StaffPage from "./pages/StaffPage.jsx";
 import WeekShiftsPage from "./pages/WeekShiftsPage.jsx";
@@ -9,8 +10,22 @@ import TempDateAvailabilityPage from "./pages/TempDateAvailabilityPage.jsx";
 import HolidayRequestsPage from "./pages/HolidayRequestsPage.jsx";
 
 export default function App() {
+  const location = useLocation();
+  const tempPathBypassesLogin = isTempDateAvailabilityPath(location.pathname);
+  const { loggedIn } = useManagerAuth();
   const { lockedStaffId, tempV1LinkPending } = useTempIsolation();
   const hideManagerChrome = Boolean(lockedStaffId || tempV1LinkPending);
+
+  if (!tempPathBypassesLogin && !loggedIn) {
+    return (
+      <div className="app">
+        <header className="header">
+          <h1>Clinic staff rota</h1>
+        </header>
+        <ManagerLoginScreen />
+      </div>
+    );
+  }
 
   return (
     <div className="app">
