@@ -4,7 +4,7 @@ import DateAvailabilityEditor from "../components/DateAvailabilityEditor.jsx";
 
 function tempSelfServePath(staffId) {
   const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "") || "";
-  return `${base}/temp-date-availability/${staffId}`;
+  return `${base}/temp-date-availability/${staffId}?v=1`;
 }
 
 function tempSelfServeAbsoluteUrl(staffId) {

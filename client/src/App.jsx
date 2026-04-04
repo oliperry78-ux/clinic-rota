@@ -1,5 +1,6 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { BiweekAnchorBar } from "./BiweekAnchorContext.jsx";
+import { TempIsolationRedirect, useTempIsolation } from "./TempIsolationContext.jsx";
 import StaffPage from "./pages/StaffPage.jsx";
 import WeekShiftsPage from "./pages/WeekShiftsPage.jsx";
 import RotaPage from "./pages/RotaPage.jsx";
@@ -8,29 +9,35 @@ import TempDateAvailabilityPage from "./pages/TempDateAvailabilityPage.jsx";
 import HolidayRequestsPage from "./pages/HolidayRequestsPage.jsx";
 
 export default function App() {
+  const { lockedStaffId, tempV1LinkPending } = useTempIsolation();
+  const hideManagerChrome = Boolean(lockedStaffId || tempV1LinkPending);
+
   return (
     <div className="app">
+      <TempIsolationRedirect />
       <header className="header">
         <h1>Clinic staff rota</h1>
-        <nav className="nav">
-          <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>
-            Staff
-          </NavLink>
-          <NavLink to="/shifts" className={({ isActive }) => (isActive ? "active" : "")}>
-            Week shifts
-          </NavLink>
-          <NavLink to="/rota" className={({ isActive }) => (isActive ? "active" : "")}>
-            Rota
-          </NavLink>
-          <NavLink to="/date-availability" className={({ isActive }) => (isActive ? "active" : "")}>
-            Date availability
-          </NavLink>
-          <NavLink to="/holiday-requests" className={({ isActive }) => (isActive ? "active" : "")}>
-            Holiday Requests
-          </NavLink>
-        </nav>
+        {!hideManagerChrome ? (
+          <nav className="nav">
+            <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>
+              Staff
+            </NavLink>
+            <NavLink to="/shifts" className={({ isActive }) => (isActive ? "active" : "")}>
+              Week shifts
+            </NavLink>
+            <NavLink to="/rota" className={({ isActive }) => (isActive ? "active" : "")}>
+              Rota
+            </NavLink>
+            <NavLink to="/date-availability" className={({ isActive }) => (isActive ? "active" : "")}>
+              Date availability
+            </NavLink>
+            <NavLink to="/holiday-requests" className={({ isActive }) => (isActive ? "active" : "")}>
+              Holiday Requests
+            </NavLink>
+          </nav>
+        ) : null}
       </header>
-      <BiweekAnchorBar />
+      {!hideManagerChrome ? <BiweekAnchorBar /> : null}
       <main className="main">
         <Routes>
           <Route path="/" element={<StaffPage />} />

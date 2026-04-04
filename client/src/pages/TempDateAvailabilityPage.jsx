@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api.js";
 import DateAvailabilityEditor from "../components/DateAvailabilityEditor.jsx";
+import { useTempIsolation } from "../TempIsolationContext.jsx";
 
 export default function TempDateAvailabilityPage() {
+  const [searchParams] = useSearchParams();
+  const { activateTempIsolation, clearTempIsolation, setTempV1LinkPending } = useTempIsolation();
   const { staffId: staffIdParam } = useParams();
   const id = Number(staffIdParam);
   const [member, setMember] = useState(null);
@@ -41,6 +44,34 @@ export default function TempDateAvailabilityPage() {
       cancelled = true;
     };
   }, [id]);
+
+  const v1Temp = searchParams.get("v") === "1";
+
+  useEffect(() => {
+    if (!v1Temp) return;
+    setTempV1LinkPending(true);
+    return () => setTempV1LinkPending(false);
+  }, [v1Temp, setTempV1LinkPending]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (v1Temp) setTempV1LinkPending(false);
+    if (!v1Temp) return;
+    if (loadError || !member || String(member.staff_type ?? "").trim() !== "Temp") {
+      clearTempIsolation();
+      return;
+    }
+    activateTempIsolation(String(id));
+  }, [
+    loading,
+    loadError,
+    member,
+    id,
+    v1Temp,
+    activateTempIsolation,
+    clearTempIsolation,
+    setTempV1LinkPending,
+  ]);
 
   if (loading) {
     return (
