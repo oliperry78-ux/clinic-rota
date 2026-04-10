@@ -381,6 +381,7 @@ export default function StaffPage() {
               <select value={role} onChange={(e) => setRole(e.target.value)} required>
                 <option value="receptionist">receptionist</option>
                 <option value="doctors assistant">doctors assistant</option>
+                <option value="doctor">doctor</option>
               </select>
             </div>
             <div>
@@ -509,6 +510,7 @@ export default function StaffPage() {
               <select value={editRole} onChange={(e) => setEditRole(e.target.value)} required>
                 <option value="receptionist">receptionist</option>
                 <option value="doctors assistant">doctors assistant</option>
+                <option value="doctor">doctor</option>
               </select>
             </div>
             <div>

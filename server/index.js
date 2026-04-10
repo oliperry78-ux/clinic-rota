@@ -19,6 +19,7 @@ function normalizeRole(raw) {
   const role = String(raw ?? "").trim().toLowerCase();
   if (role === "assistant" || role === "doctors assistant") return "doctors assistant";
   if (role === "receptionist") return "receptionist";
+  if (role === "doctor") return "doctor";
   return "receptionist";
 }
 
