@@ -34,7 +34,7 @@ export default function DateAvailabilityPage() {
     [staff, selectedId]
   );
 
-  const shareUrl = selectedId && selectedStaff?.staff_type === "Temp" ? tempSelfServeAbsoluteUrl(selectedId) : "";
+  const shareUrl = selectedId && selectedStaff != null ? tempSelfServeAbsoluteUrl(selectedId) : "";
 
   async function onCopyLink() {
     if (!shareUrl) return;
@@ -79,13 +79,13 @@ export default function DateAvailabilityPage() {
                 ))}
               </select>
             </label>
-            {selectedStaff?.staff_type === "Temp" && selectedId && (
+            {selectedStaff != null && selectedId && (
               <div
                 className="temp-availability-share"
                 style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}
               >
                 <span className="meta" style={{ fontSize: "0.82rem" }}>
-                  Temp self-serve:
+                  Self-serve link:
                 </span>
                 <button type="button" className="secondary" onClick={() => void onCopyLink()}>
                   Copy Link

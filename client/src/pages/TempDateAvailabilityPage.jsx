@@ -30,9 +30,6 @@ export default function TempDateAvailabilityPage() {
         const m = list.find((s) => Number(s.id) === id) ?? null;
         setMember(m);
         if (!m) setLoadError("Staff member not found.");
-        else if (String(m.staff_type ?? "").trim() !== "Temp") {
-          setLoadError("This link is only for temporary staff.");
-        }
       } catch (e) {
         if (!cancelled) setLoadError(e.message);
       } finally {
@@ -57,7 +54,7 @@ export default function TempDateAvailabilityPage() {
     if (loading) return;
     if (v1Temp) setTempV1LinkPending(false);
     if (!v1Temp) return;
-    if (loadError || !member || String(member.staff_type ?? "").trim() !== "Temp") {
+    if (loadError || !member) {
       clearTempIsolation();
       return;
     }
@@ -81,7 +78,7 @@ export default function TempDateAvailabilityPage() {
     );
   }
 
-  if (loadError || !member || String(member.staff_type ?? "").trim() !== "Temp") {
+  if (loadError || !member) {
     return (
       <div className="card date-availability-card">
         <h2>Date availability</h2>
