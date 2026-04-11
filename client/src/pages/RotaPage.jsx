@@ -10,7 +10,7 @@ import {
   receptionistLabelFromOrderedStaffIds,
 } from "../rotaPersistence.js";
 import { generateReceptionistCombinations } from "../receptionistCombinations.js";
-import { eligibleAssistantsForSession, eligibleReceptionistsForBlock } from "../rotaEligibility.js";
+import { dateStringToDayOfWeek, eligibleAssistantsForSession, eligibleReceptionistsForBlock, isStaffAvailableForShiftWindow } from "../rotaEligibility.js";
 import { biweekCycleIndexFromIsoDate } from "../biweekAnchor.js";
 import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
 import { toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
@@ -692,6 +692,20 @@ export default function RotaPage() {
                                 eligibleForSession
                               );
                               const roomBit = String(s.room || "").trim();
+                              const doctorName = String(s.doctor || "").trim();
+                              const doctorStaff = doctorName
+                                ? staff.find((p) => String(p.role ?? "").trim().toLowerCase() === "doctor" && p.name === doctorName)
+                                : null;
+                              const doctorIsUnavailable =
+                                Boolean(doctorStaff) &&
+                                !isStaffAvailableForShiftWindow(
+                                  doctorStaff,
+                                  s.shift_date,
+                                  dateStringToDayOfWeek(s.shift_date),
+                                  s.start_time,
+                                  s.end_time,
+                                  dateOverrides
+                                );
                               return (
                                 <div key={s.id} className="rota-session-block">
                                   <div className="rota-cell-line rota-session-heading">
@@ -699,7 +713,14 @@ export default function RotaPage() {
                                     {roomBit ? ` · ${roomBit}` : ""}
                                   </div>
                                   <div className="rota-cell-line rota-session-indent">
-                                    Doctor: {String(s.doctor || "").trim() || "—"}
+                                    Doctor:{" "}
+                                    {doctorIsUnavailable ? (
+                                      <span className="rota-assignment-invalid">
+                                        {doctorName} (unavailable)
+                                      </span>
+                                    ) : (
+                                      doctorName || "—"
+                                    )}
                                   </div>
                                   <div className="rota-cell-line rota-session-indent">
                                     Assistant:{" "}
