@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
+import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
+import { dateStringToDayOfWeek, isStaffAvailableForShiftWindow, staffAllowedAtClinic } from "../rotaEligibility.js";
 import { addDaysToISO, toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
 
 const REPEAT_ONCE = "once";
@@ -46,6 +48,60 @@ function groupByClinic(sessions) {
   return [...m.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
 
+function classifyDoctors(isoDate, startTime, endTime, clinicName, staffList, dateOverrides) {
+  const doctors = (Array.isArray(staffList) ? staffList : []).filter(
+    (p) => String(p.role ?? "").trim().toLowerCase() === "doctor"
+  );
+  if (!isoDate || !startTime || !endTime) {
+    return { available: doctors, unavailable: [] };
+  }
+  const dow = dateStringToDayOfWeek(isoDate);
+  const clinic = String(clinicName ?? "").trim();
+  const available = [];
+  const unavailable = [];
+  for (const doc of doctors) {
+    const clinicOk = !clinic || staffAllowedAtClinic(doc, clinic);
+    const timeOk = isStaffAvailableForShiftWindow(doc, isoDate, dow, startTime, endTime, dateOverrides);
+    if (clinicOk && timeOk) available.push(doc);
+    else unavailable.push(doc);
+  }
+  return { available, unavailable };
+}
+
+function DoctorSelect({ value, onChange, isoDate, startTime, endTime, clinicName, staffList, dateOverrides, anchorIso, required }) {
+  const { available, unavailable } = useMemo(
+    () => classifyDoctors(isoDate, startTime, endTime, clinicName, staffList, dateOverrides),
+    // anchorIso included so this re-evaluates if the Week 1 anchor setting changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isoDate, startTime, endTime, clinicName, staffList, dateOverrides, anchorIso]
+  );
+  const knownNames = useMemo(
+    () => new Set([...available, ...unavailable].map((d) => d.name)),
+    [available, unavailable]
+  );
+  const showFallback = Boolean(value) && !knownNames.has(value);
+  return (
+    <select value={value} onChange={onChange} required={required}>
+      <option value="">Select a doctor…</option>
+      {showFallback && <option value={value}>— keep current ({value}) —</option>}
+      {available.length > 0 && (
+        <optgroup label="Available">
+          {available.map((d) => (
+            <option key={d.id} value={d.name}>{d.name}</option>
+          ))}
+        </optgroup>
+      )}
+      {unavailable.length > 0 && (
+        <optgroup label="Unavailable">
+          {unavailable.map((d) => (
+            <option key={d.id} value={d.name}>{d.name}</option>
+          ))}
+        </optgroup>
+      )}
+    </select>
+  );
+}
+
 export default function WeekShiftsPage() {
   const today = toISODate(new Date());
   const [weekAnchor, setWeekAnchor] = useState(today);
@@ -67,6 +123,22 @@ export default function WeekShiftsPage() {
     repeat_until: "",
   });
   const [editingShift, setEditingShift] = useState(null);
+  const { anchorIso } = useBiweekAnchor();
+  const [staff, setStaff] = useState([]);
+  const [dateOverrides, setDateOverrides] = useState([]);
+
+  useEffect(() => {
+    async function loadMeta() {
+      try {
+        const [sList, ovData] = await Promise.all([api.getStaff(), api.getDateOverrides()]);
+        setStaff(sList);
+        setDateOverrides(ovData?.dateOverrides ?? []);
+      } catch {
+        // non-critical; doctor dropdown degrades to empty groups
+      }
+    }
+    void loadMeta();
+  }, []);
 
   async function load() {
     setError(null);
@@ -295,11 +367,17 @@ export default function WeekShiftsPage() {
             </div>
             <div>
               <label>Doctor</label>
-              <input
+              <DoctorSelect
                 value={newShift.doctor}
                 onChange={(e) => setNewShift((s) => ({ ...s, doctor: e.target.value }))}
+                isoDate={newShift.shift_date}
+                startTime={newShift.start_time}
+                endTime={newShift.end_time}
+                clinicName={newShift.clinic}
+                staffList={staff}
+                dateOverrides={dateOverrides}
+                anchorIso={anchorIso}
                 required
-                placeholder="Name or ID"
               />
             </div>
             <div>
@@ -408,9 +486,16 @@ export default function WeekShiftsPage() {
                           </div>
                           <div style={{ flex: "1 1 6rem" }}>
                             <label>Doctor</label>
-                            <input
+                            <DoctorSelect
                               value={editingShift.doctor}
                               onChange={(e) => setEditingShift((sh) => ({ ...sh, doctor: e.target.value }))}
+                              isoDate={editingShift.shift_date}
+                              startTime={editingShift.start_time}
+                              endTime={editingShift.end_time}
+                              clinicName={editingShift.clinic}
+                              staffList={staff}
+                              dateOverrides={dateOverrides}
+                              anchorIso={anchorIso}
                               required
                             />
                           </div>
