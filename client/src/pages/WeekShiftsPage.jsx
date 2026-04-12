@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
 import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
+import { CLINIC_NAMES, CLINIC_ROOMS } from "../clinicConfig.js";
 import { dateStringToDayOfWeek, isStaffAvailableForShiftWindow, staffAllowedAtClinic } from "../rotaEligibility.js";
 import { addDaysToISO, toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
 
@@ -116,8 +117,8 @@ export default function WeekShiftsPage() {
     shift_date: startISO,
     start_time: "09:00",
     end_time: "17:00",
-    clinic: "",
-    room: "",
+    clinic: CLINIC_NAMES[0],
+    room: CLINIC_ROOMS[CLINIC_NAMES[0]][0],
     doctor: "",
     repeat_mode: REPEAT_ONCE,
     repeat_until: "",
@@ -349,21 +350,28 @@ export default function WeekShiftsPage() {
             </div>
             <div>
               <label>Clinic</label>
-              <input
+              <select
                 value={newShift.clinic}
-                onChange={(e) => setNewShift((s) => ({ ...s, clinic: e.target.value }))}
+                onChange={(e) => {
+                  const clinic = e.target.value;
+                  setNewShift((s) => ({ ...s, clinic, room: (CLINIC_ROOMS[clinic] ?? [""])[0] }));
+                }}
                 required
-                placeholder="e.g. Main"
-              />
+              >
+                {CLINIC_NAMES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
             </div>
             <div>
               <label>Room</label>
-              <input
+              <select
                 value={newShift.room}
                 onChange={(e) => setNewShift((s) => ({ ...s, room: e.target.value }))}
                 required
-                placeholder="e.g. 1"
-              />
+              >
+                {(CLINIC_ROOMS[newShift.clinic] ?? []).map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label>Doctor</label>
@@ -470,19 +478,28 @@ export default function WeekShiftsPage() {
                           </div>
                           <div style={{ flex: "1 1 6rem" }}>
                             <label>Clinic</label>
-                            <input
+                            <select
                               value={editingShift.clinic}
-                              onChange={(e) => setEditingShift((sh) => ({ ...sh, clinic: e.target.value }))}
+                              onChange={(e) => {
+                                const clinic = e.target.value;
+                                setEditingShift((sh) => ({ ...sh, clinic, room: (CLINIC_ROOMS[clinic] ?? [""])[0] }));
+                              }}
                               required
-                            />
+                            >
+                              {CLINIC_NAMES.map((c) => <option key={c} value={c}>{c}</option>)}
+                            </select>
                           </div>
                           <div style={{ flex: "1 1 5rem" }}>
                             <label>Room</label>
-                            <input
+                            <select
                               value={editingShift.room}
                               onChange={(e) => setEditingShift((sh) => ({ ...sh, room: e.target.value }))}
                               required
-                            />
+                            >
+                              {(CLINIC_ROOMS[editingShift.clinic] ?? []).map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
+                            </select>
                           </div>
                           <div style={{ flex: "1 1 6rem" }}>
                             <label>Doctor</label>
