@@ -197,31 +197,32 @@ function ReceptionistPicker({
     alignItems: "center",
     justifyContent: "space-between",
     gap: "0.25rem",
-    padding: "1px 2px 1px 3px",
-    border: "1px solid #767676",
-    borderRadius: "2px",
+    padding: "0.4rem 0.5rem",
+    border: "1px solid #b8c4d0",
+    borderRadius: "6px",
     background: "white",
     color: "inherit",
     cursor: "default",
     fontSize: "0.75rem",
     fontFamily: "inherit",
+    fontWeight: "normal",
     lineHeight: "normal",
     minWidth: "5rem",
     maxWidth: "12rem",
   };
 
   const groupHeaderStyle = {
-    padding: "0.15rem 0.5rem",
-    fontSize: "0.7rem",
-    fontWeight: 600,
-    color: "GrayText",
+    padding: "0.3rem 0.5rem 0.1rem",
+    fontSize: "0.72rem",
+    fontWeight: "bold",
+    color: "inherit",
     userSelect: "none",
     pointerEvents: "none",
   };
 
   function rowStyle(selected) {
     return {
-      padding: "0.2rem 0.75rem",
+      padding: "0.28rem 0.75rem",
       cursor: "default",
       background: selected ? "Highlight" : "",
       color: selected ? "HighlightText" : "",
@@ -248,7 +249,7 @@ function ReceptionistPicker({
             selectedLabel
           )}
         </span>
-        <span style={{ fontSize: "0.6rem", lineHeight: 1, flexShrink: 0 }}>▾</span>
+        <span style={{ fontSize: "0.65rem", lineHeight: 1, flexShrink: 0, color: "GrayText", marginLeft: "0.1rem" }}>▾</span>
       </button>
 
       {open && (
@@ -259,14 +260,15 @@ function ReceptionistPicker({
             left: 0,
             zIndex: 100,
             background: "white",
-            border: "1px solid #767676",
-            borderRadius: "2px",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+            border: "1px solid #d8dee8",
+            borderRadius: "6px",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
             minWidth: "100%",
             width: "max-content",
             maxHeight: "200px",
             overflowY: "auto",
             fontSize: "0.75rem",
+            padding: "0.15rem 0",
           }}
         >
           {/* Unassigned row */}
