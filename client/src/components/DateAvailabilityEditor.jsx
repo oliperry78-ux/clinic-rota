@@ -77,6 +77,33 @@ export default function DateAvailabilityEditor({
   const monthLabel = monthAnchor.toLocaleString(undefined, { month: "long", year: "numeric" });
   const canEdit = staffId != null && Number.isFinite(Number(staffId)) && Number(staffId) > 0;
 
+  // True whenever localGreens differs from the last server-loaded state.
+  // dateOverrides always reflects what is stored on the server (updated on mount and after each save).
+  const isDirty = useMemo(() => {
+    if (!canEdit) return false;
+    const sid = Number(staffId);
+    const serverSet = new Set(
+      dateOverrides
+        .filter((o) => Number(o.staffId) === sid && o.isAvailable)
+        .map((o) => String(o.date))
+    );
+    if (serverSet.size !== localGreens.size) return true;
+    for (const d of localGreens) {
+      if (!serverSet.has(d)) return true;
+    }
+    return false;
+  }, [canEdit, staffId, dateOverrides, localGreens]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+    function handleBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
   function toggleDay(iso) {
     if (!canEdit || !iso) return;
     setLocalGreens((prev) => {
@@ -115,6 +142,9 @@ export default function DateAvailabilityEditor({
 
       <div className="date-availability-toolbar">
         {managerToolbar}
+        {isDirty && (
+          <span className="date-availability-unsaved">Unsaved changes</span>
+        )}
         <button type="button" disabled={!canEdit || saving} onClick={() => void onSave()}>
           {saving ? "Saving…" : "Save"}
         </button>

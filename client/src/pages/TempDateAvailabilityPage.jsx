@@ -93,10 +93,10 @@ export default function TempDateAvailabilityPage() {
         staffId={id}
         mainTitle="Your date availability"
         hideSelectPrompt
-        staffBanner={`${member.name} — click days you are available (green), then Save.`}
+        staffBanner={`${member.name} — click days you are available across any months, then press Save once to submit all changes.`}
         intro={
           <p className="meta date-availability-intro">
-            Green days are explicitly available on that date. Other days follow your weekly pattern where it applies.
+            Green days mark you as explicitly available on that date. You can move between months and select dates freely — one Save at the end will save everything at once. Other days follow your weekly pattern where it applies.
           </p>
         }
       />

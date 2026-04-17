@@ -642,6 +642,12 @@ button.rota-edit-link:focus-visible {
   margin-bottom: 1rem;
 }
 
+.date-availability-unsaved {
+  font-size: 0.8rem;
+  color: #b45309;
+  font-style: italic;
+}
+
 .date-availability-staff-label {
   display: flex;
   flex-wrap: wrap;
