@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
 import { CLINIC_NAMES, CLINIC_ROOMS } from "../clinicConfig.js";
@@ -9,6 +9,7 @@ import {
   receptionistManualOverrideMapFromApiPayload,
   mergeReceptionistStateForDateRange,
   mergeReceptionistManualOverrideForDateRange,
+  receptionistLabelFromOrderedStaffIds,
 } from "../rotaPersistence.js";
 import {
   dateStringToDayOfWeek,
@@ -159,6 +160,172 @@ function AssistantSelect({ value, onChange, session, staffList, allShifts, dateO
   );
 }
 
+/**
+ * Unified receptionist picker for Weekly Shifts.
+ * Presentational only — all logic and state live in the parent.
+ * Available combinations are single-select; unavailable individuals are multi-select.
+ * Row highlight uses CSS system color keywords (Highlight / HighlightText) so the
+ * selected style is pixel-identical to native <select> selection on every OS.
+ */
+function ReceptionistPicker({
+  combos,
+  unavailableIndividuals,
+  selectedLabel,
+  overrideIds,
+  isManualOverride,
+  rxInvalid,
+  onComboSelect,
+  onOverrideToggle,
+  onClear,
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onMouseDown(e) {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [open]);
+
+  const showRed = rxInvalid || isManualOverride;
+
+  const triggerStyle = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "0.25rem",
+    padding: "1px 2px 1px 3px",
+    border: "1px solid #767676",
+    borderRadius: "2px",
+    background: "white",
+    color: "inherit",
+    cursor: "default",
+    fontSize: "0.75rem",
+    fontFamily: "inherit",
+    lineHeight: "normal",
+    minWidth: "5rem",
+    maxWidth: "12rem",
+  };
+
+  const groupHeaderStyle = {
+    padding: "0.15rem 0.5rem",
+    fontSize: "0.7rem",
+    fontWeight: 600,
+    color: "GrayText",
+    userSelect: "none",
+    pointerEvents: "none",
+  };
+
+  function rowStyle(selected) {
+    return {
+      padding: "0.2rem 0.75rem",
+      cursor: "default",
+      background: selected ? "Highlight" : "",
+      color: selected ? "HighlightText" : "",
+      whiteSpace: "nowrap",
+    };
+  }
+
+  function hoverOn(e, selected) {
+    if (!selected) e.currentTarget.style.background = "rgba(0,0,0,0.06)";
+  }
+  function hoverOff(e, selected) {
+    if (!selected) e.currentTarget.style.background = "";
+  }
+
+  return (
+    <div ref={rootRef} style={{ position: "relative", display: "inline-block" }}>
+      <button type="button" style={triggerStyle} onClick={() => setOpen((v) => !v)}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {!selectedLabel ? (
+            <span style={{ color: "GrayText" }}>— Unassigned —</span>
+          ) : showRed ? (
+            <span className="rota-assignment-invalid">{selectedLabel}</span>
+          ) : (
+            selectedLabel
+          )}
+        </span>
+        <span style={{ fontSize: "0.6rem", lineHeight: 1, flexShrink: 0 }}>▾</span>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            zIndex: 100,
+            background: "white",
+            border: "1px solid #767676",
+            borderRadius: "2px",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+            minWidth: "100%",
+            width: "max-content",
+            maxHeight: "200px",
+            overflowY: "auto",
+            fontSize: "0.75rem",
+          }}
+        >
+          {/* Unassigned row */}
+          <div
+            style={rowStyle(false)}
+            onMouseEnter={(e) => hoverOn(e, false)}
+            onMouseLeave={(e) => hoverOff(e, false)}
+            onMouseDown={(e) => { e.preventDefault(); onClear(); setOpen(false); }}
+          >
+            — Unassigned —
+          </div>
+
+          {/* Available section */}
+          {combos.length > 0 && (
+            <>
+              <div style={groupHeaderStyle}>Available</div>
+              {combos.map((c) => {
+                const sel = !isManualOverride && selectedLabel === c.label;
+                return (
+                  <div
+                    key={c.label}
+                    style={rowStyle(sel)}
+                    onMouseEnter={(e) => hoverOn(e, sel)}
+                    onMouseLeave={(e) => hoverOff(e, sel)}
+                    onMouseDown={(e) => { e.preventDefault(); onComboSelect(c.label); setOpen(false); }}
+                  >
+                    {c.label}
+                  </div>
+                );
+              })}
+            </>
+          )}
+
+          {/* Unavailable section */}
+          {unavailableIndividuals.length > 0 && (
+            <>
+              <div style={groupHeaderStyle}>Unavailable</div>
+              {unavailableIndividuals.map((p) => {
+                const sel = overrideIds.includes(Number(p.id));
+                return (
+                  <div
+                    key={p.id}
+                    style={rowStyle(sel)}
+                    onMouseEnter={(e) => hoverOn(e, sel)}
+                    onMouseLeave={(e) => hoverOff(e, sel)}
+                    onMouseDown={(e) => { e.preventDefault(); onOverrideToggle(p.id, !sel); }}
+                  >
+                    {p.name}
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WeekShiftsPage() {
   const today = toISODate(new Date());
   const [weekAnchor, setWeekAnchor] = useState(today);
@@ -186,6 +353,8 @@ export default function WeekShiftsPage() {
   const [dateOverrides, setDateOverrides] = useState([]);
   const [selectedReceptionistByBlock, setSelectedReceptionistByBlock] = useState({});
   const [receptionistManualOverrideByBlock, setReceptionistManualOverrideByBlock] = useState({});
+  // Record<blockKey, number[]> — staff IDs selected as individual unavailable overrides.
+  const [overrideSelectionByBlock, setOverrideSelectionByBlock] = useState({});
 
   /**
    * Single load that fetches everything for the current week together so
@@ -211,6 +380,28 @@ export default function WeekShiftsPage() {
       setReceptionistManualOverrideByBlock((prev) =>
         mergeReceptionistManualOverrideForDateRange(prev, loadedRxManual, startISO, endISO)
       );
+      // Hydrate override checkboxes: for manually-overridden blocks, record the individual staff IDs.
+      const loadedOverrides = {};
+      for (const block of rxPayload?.blocks ?? []) {
+        const date = String(block.shift_date ?? "").trim();
+        const clinic = String(block.clinic ?? "").trim();
+        if (!date) continue;
+        const slots = block.slots ?? [];
+        if (slots.some((sl) => sl.manual_override === true)) {
+          const key = `${date}\0${clinic}`;
+          loadedOverrides[key] = slots
+            .filter((sl) => sl.staff_id != null && sl.staff_id !== "")
+            .map((sl) => Number(sl.staff_id));
+        }
+      }
+      setOverrideSelectionByBlock((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) {
+          const iso = k.split("\0")[0];
+          if (iso >= startISO && iso <= endISO) delete next[k];
+        }
+        return { ...next, ...loadedOverrides };
+      });
     } catch (e) {
       setError(e.message);
     }
@@ -365,38 +556,61 @@ export default function WeekShiftsPage() {
     }
   }
 
-  /** Save receptionist combo selection for a clinic-day block. */
-  async function handleReceptionistChange(isoDate, clinicName, newLabel, combos, unavailableCombos) {
+  /** Save a valid available combo selection for a clinic-day block. */
+  async function handleReceptionistChange(isoDate, clinicName, newLabel, combos) {
     const key = `${isoDate}\0${clinicName}`;
     setError(null);
     try {
       if (!newLabel) {
         await api.putClinicDayReceptionistSlots({ shift_date: isoDate, clinic: clinicName, staffIds: [] });
-        setSelectedReceptionistByBlock((prev) => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        });
-        setReceptionistManualOverrideByBlock((prev) => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        });
+        setSelectedReceptionistByBlock((prev) => { const next = { ...prev }; delete next[key]; return next; });
+        setReceptionistManualOverrideByBlock((prev) => { const next = { ...prev }; delete next[key]; return next; });
+        setOverrideSelectionByBlock((prev) => { const next = { ...prev }; delete next[key]; return next; });
       } else {
-        // Check available combos first; fall back to unavailable (manual override).
-        const availableCombo = combos.find((c) => c.label === newLabel);
-        const combo = availableCombo ?? (unavailableCombos ?? []).find((c) => c.label === newLabel);
+        const combo = combos.find((c) => c.label === newLabel);
         if (!combo) return;
-        const isManual = !availableCombo;
         const staffIds = combo.contributions.map((c) => Number(c.staffId));
         await api.putClinicDayReceptionistSlots({
           shift_date: isoDate,
           clinic: clinicName,
           staffIds,
-          manualOverrides: staffIds.map(() => isManual),
+          manualOverrides: staffIds.map(() => false),
         });
         setSelectedReceptionistByBlock((prev) => ({ ...prev, [key]: newLabel }));
-        setReceptionistManualOverrideByBlock((prev) => ({ ...prev, [key]: isManual }));
+        setReceptionistManualOverrideByBlock((prev) => ({ ...prev, [key]: false }));
+        // Clear any active override selection — combo and override are mutually exclusive.
+        setOverrideSelectionByBlock((prev) => { const next = { ...prev }; delete next[key]; return next; });
+      }
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  /** Save a manual override selection of individual unavailable receptionists for a clinic-day block. */
+  async function handleOverrideChange(isoDate, clinicName, staffId, checked) {
+    const key = `${isoDate}\0${clinicName}`;
+    setError(null);
+    const prev = overrideSelectionByBlock[key] ?? [];
+    const newIds = checked
+      ? [...new Set([...prev, Number(staffId)])]
+      : prev.filter((id) => id !== Number(staffId));
+    try {
+      if (newIds.length === 0) {
+        await api.putClinicDayReceptionistSlots({ shift_date: isoDate, clinic: clinicName, staffIds: [] });
+        setOverrideSelectionByBlock((p) => { const n = { ...p }; delete n[key]; return n; });
+        setSelectedReceptionistByBlock((p) => { const n = { ...p }; delete n[key]; return n; });
+        setReceptionistManualOverrideByBlock((p) => { const n = { ...p }; delete n[key]; return n; });
+      } else {
+        const label = receptionistLabelFromOrderedStaffIds(newIds, staff);
+        await api.putClinicDayReceptionistSlots({
+          shift_date: isoDate,
+          clinic: clinicName,
+          staffIds: newIds,
+          manualOverrides: newIds.map(() => true),
+        });
+        setOverrideSelectionByBlock((p) => ({ ...p, [key]: newIds }));
+        setSelectedReceptionistByBlock((p) => ({ ...p, [key]: label }));
+        setReceptionistManualOverrideByBlock((p) => ({ ...p, [key]: true }));
       }
     } catch (e) {
       setError(e.message);
@@ -428,9 +642,9 @@ export default function WeekShiftsPage() {
   }, [staff]);
 
   /**
-   * Per-clinic-day: receptionist combinations split into available and unavailable.
-   * Available  = all members pass eligibleReceptionistsForBlock for this window.
-   * Unavailable = at least one member does not (selecting one saves as manual override).
+   * Per-clinic-day: available receptionist combinations + list of individually unavailable staff.
+   * combos              = all members pass eligibleReceptionistsForBlock for this window.
+   * unavailableIndividuals = clinic-allowed receptionists who are time-unavailable (shown as override checkboxes).
    * Uses the same shared eligibility + combination logic as RotaPage.
    */
   const combinationCache = useMemo(() => {
@@ -465,16 +679,14 @@ export default function WeekShiftsPage() {
             staff_type: p.staff_type ?? "Full time",
           }));
 
-        // Generate all combinations (available + unavailable) from the full pool.
-        const allCombos = generateReceptionistCombinations(allForBlock, summary.required_capacity);
-        const combos = allCombos.filter((c) =>
-          c.contributions.every((contrib) => eligibleIds.has(Number(contrib.staffId)))
-        );
-        const unavailableCombos = allCombos.filter((c) =>
-          c.contributions.some((contrib) => !eligibleIds.has(Number(contrib.staffId)))
-        );
+        // Available combos: generate only from eligible staff (all members available).
+        const eligiblePool = allForBlock.filter((p) => eligibleIds.has(Number(p.id)));
+        const combos = generateReceptionistCombinations(eligiblePool, summary.required_capacity);
 
-        cache.set(key, { summary, combos, unavailableCombos });
+        // Unavailable individuals: clinic-allowed but time-unavailable (used for override checkboxes).
+        const unavailableIndividuals = allForBlock.filter((p) => !eligibleIds.has(Number(p.id)));
+
+        cache.set(key, { summary, combos, unavailableIndividuals });
       }
     }
     return cache;
@@ -640,11 +852,15 @@ export default function WeekShiftsPage() {
               )}
               {groupByClinic(byDate[iso]).map(([clinicName, list]) => {
                 const blockKey = `${iso}\0${clinicName}`;
-                const { combos, unavailableCombos } =
-                  combinationCache.get(blockKey) ?? { combos: [], unavailableCombos: [] };
+                const { combos, unavailableIndividuals } =
+                  combinationCache.get(blockKey) ?? { combos: [], unavailableIndividuals: [] };
                 const selectedLabel = selectedReceptionistByBlock[blockKey] ?? null;
+                const overrideIds = overrideSelectionByBlock[blockKey] ?? [];
+                // Only flag as invalid when the saved label is not a valid combo AND not a manual override.
                 const rxInvalid =
-                  Boolean(selectedLabel) && !receptionistComboIsCurrentlyValid(selectedLabel, combos);
+                  Boolean(selectedLabel) &&
+                  !receptionistComboIsCurrentlyValid(selectedLabel, combos) &&
+                  !receptionistManualOverrideByBlock[blockKey];
 
                 return (
                   <div key={clinicName} style={{ marginBottom: "0.75rem" }}>
@@ -661,54 +877,19 @@ export default function WeekShiftsPage() {
                     </div>
 
                     {/* Receptionist assignment — once per clinic-day block, NOT per session */}
-                    <div
-                      style={{
-                        fontSize: "0.75rem",
-                        marginBottom: "0.4rem",
-                        display: "flex",
-                        flexWrap: "wrap",
-                        alignItems: "baseline",
-                        gap: "0.3rem",
-                      }}
-                    >
+                    <div style={{ fontSize: "0.75rem", marginBottom: "0.4rem", display: "flex", alignItems: "baseline", gap: "0.3rem" }}>
                       <span style={{ color: "var(--muted)" }}>Receptionist:</span>
-                      {/* Fix 2: show full label in red when invalid, matching assistant/doctor pattern */}
-                      {rxInvalid && selectedLabel && (
-                        <span className="rota-assignment-invalid">
-                          {selectedLabel} (unavailable)
-                        </span>
-                      )}
-                      {/* Fix 3: use Available optgroup to match doctor/assistant dropdown style */}
-                      <select
-                        value={rxInvalid ? "" : (selectedLabel ?? "")}
-                        onChange={(e) =>
-                          void handleReceptionistChange(
-                            iso, clinicName, e.target.value, combos, unavailableCombos
-                          )
-                        }
-                        style={{ fontSize: "0.75rem" }}
-                      >
-                        <option value="">— Unassigned —</option>
-                        {combos.length > 0 && (
-                          <optgroup label="Available">
-                            {combos.map((c) => (
-                              <option key={c.label} value={c.label}>{c.label}</option>
-                            ))}
-                          </optgroup>
-                        )}
-                        {unavailableCombos.length > 0 && (
-                          <optgroup label="Unavailable">
-                            {unavailableCombos.map((c) => (
-                              <option key={c.label} value={c.label}>{c.label}</option>
-                            ))}
-                          </optgroup>
-                        )}
-                      </select>
-                      {!rxInvalid && selectedLabel && receptionistManualOverrideByBlock[blockKey] && (
-                        <span className="rota-manual-override-label" style={{ fontSize: "0.7rem" }}>
-                          (manual)
-                        </span>
-                      )}
+                      <ReceptionistPicker
+                        combos={combos}
+                        unavailableIndividuals={unavailableIndividuals}
+                        selectedLabel={selectedLabel}
+                        overrideIds={overrideIds}
+                        isManualOverride={Boolean(receptionistManualOverrideByBlock[blockKey])}
+                        rxInvalid={rxInvalid}
+                        onComboSelect={(label) => void handleReceptionistChange(iso, clinicName, label, combos)}
+                        onOverrideToggle={(id, checked) => void handleOverrideChange(iso, clinicName, id, checked)}
+                        onClear={() => void handleReceptionistChange(iso, clinicName, "", combos)}
+                      />
                     </div>
 
                     {/* Session cards */}
