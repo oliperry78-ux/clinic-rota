@@ -2,7 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
 import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
 import { CLINIC_NAMES, CLINIC_ROOMS } from "../clinicConfig.js";
-import { dateStringToDayOfWeek, isStaffAvailableForShiftWindow, staffAllowedAtClinic } from "../rotaEligibility.js";
+import { computeClinicDaySummary } from "../clinicDay.js";
+import { generateReceptionistCombinations } from "../receptionistCombinations.js";
+import {
+  receptionistSelectionMapFromApiPayload,
+  receptionistManualOverrideMapFromApiPayload,
+  mergeReceptionistStateForDateRange,
+  mergeReceptionistManualOverrideForDateRange,
+} from "../rotaPersistence.js";
+import {
+  dateStringToDayOfWeek,
+  eligibleAssistantsForSession,
+  eligibleReceptionistsForBlock,
+  isStaffAvailableForShiftWindow,
+  staffAllowedAtClinic,
+} from "../rotaEligibility.js";
+import { receptionistComboIsCurrentlyValid } from "../rotaDisplay.js";
 import { addDaysToISO, toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
 
 const REPEAT_ONCE = "once";
@@ -103,6 +118,47 @@ function DoctorSelect({ value, onChange, isoDate, startTime, endTime, clinicName
   );
 }
 
+/**
+ * Compact select for doctors assistant assignment.
+ * Mirrors DoctorSelect exactly: Available / Unavailable optgroups, plus a fallback
+ * option only when the assigned person has been deleted from the staff list entirely.
+ */
+function AssistantSelect({ value, onChange, session, staffList, allShifts, dateOverrides }) {
+  const eligible = eligibleAssistantsForSession(staffList, allShifts, session, dateOverrides);
+  const eligibleIds = new Set(eligible.map((a) => Number(a.id)));
+  const unavailable = (Array.isArray(staffList) ? staffList : []).filter((p) => {
+    const role = String(p.role || "").toLowerCase().trim();
+    return (role === "doctors assistant" || role === "assistant") && !eligibleIds.has(Number(p.id));
+  });
+  const numValue = value !== "" && value != null ? Number(value) : "";
+  // Show a fallback only when the assigned person is no longer in the staff list at all (deleted).
+  // If they are still in the list they appear naturally in the Unavailable group below.
+  const knownIds = new Set([...eligible, ...unavailable].map((a) => Number(a.id)));
+  const showFallback = numValue !== "" && !knownIds.has(numValue);
+  return (
+    <select value={numValue} onChange={onChange}>
+      <option value="">— Unassigned —</option>
+      {showFallback && (
+        <option value={numValue}>— keep current (Staff #{numValue}) —</option>
+      )}
+      {eligible.length > 0 && (
+        <optgroup label="Available">
+          {eligible.map((a) => (
+            <option key={a.id} value={Number(a.id)}>{a.name}</option>
+          ))}
+        </optgroup>
+      )}
+      {unavailable.length > 0 && (
+        <optgroup label="Unavailable">
+          {unavailable.map((a) => (
+            <option key={a.id} value={Number(a.id)}>{a.name}</option>
+          ))}
+        </optgroup>
+      )}
+    </select>
+  );
+}
+
 export default function WeekShiftsPage() {
   const today = toISODate(new Date());
   const [weekAnchor, setWeekAnchor] = useState(today);
@@ -120,6 +176,7 @@ export default function WeekShiftsPage() {
     clinic: CLINIC_NAMES[0],
     room: CLINIC_ROOMS[CLINIC_NAMES[0]][0],
     doctor: "",
+    assistant: "",
     repeat_mode: REPEAT_ONCE,
     repeat_until: "",
   });
@@ -127,25 +184,33 @@ export default function WeekShiftsPage() {
   const { anchorIso } = useBiweekAnchor();
   const [staff, setStaff] = useState([]);
   const [dateOverrides, setDateOverrides] = useState([]);
+  const [selectedReceptionistByBlock, setSelectedReceptionistByBlock] = useState({});
+  const [receptionistManualOverrideByBlock, setReceptionistManualOverrideByBlock] = useState({});
 
-  useEffect(() => {
-    async function loadMeta() {
-      try {
-        const [sList, ovData] = await Promise.all([api.getStaff(), api.getDateOverrides()]);
-        setStaff(sList);
-        setDateOverrides(ovData?.dateOverrides ?? []);
-      } catch {
-        // non-critical; doctor dropdown degrades to empty groups
-      }
-    }
-    void loadMeta();
-  }, []);
-
+  /**
+   * Single load that fetches everything for the current week together so
+   * receptionist labels are always built with a fresh staff list.
+   */
   async function load() {
     setError(null);
     try {
-      const list = await api.getShifts(startISO, endISO);
+      const [sList, ovData, list, rxPayload] = await Promise.all([
+        api.getStaff(),
+        api.getDateOverrides(),
+        api.getShifts(startISO, endISO),
+        api.getClinicDayReceptionistSlots(startISO, endISO),
+      ]);
+      setStaff(sList);
+      setDateOverrides(ovData?.dateOverrides ?? []);
       setShifts(list);
+      const loadedRx = receptionistSelectionMapFromApiPayload(rxPayload, sList);
+      const loadedRxManual = receptionistManualOverrideMapFromApiPayload(rxPayload);
+      setSelectedReceptionistByBlock((prev) =>
+        mergeReceptionistStateForDateRange(prev, loadedRx, startISO, endISO)
+      );
+      setReceptionistManualOverrideByBlock((prev) =>
+        mergeReceptionistManualOverrideForDateRange(prev, loadedRxManual, startISO, endISO)
+      );
     } catch (e) {
       setError(e.message);
     }
@@ -200,13 +265,16 @@ export default function WeekShiftsPage() {
       }
     }
 
+    const rawNewAssistantId = newShift.assistant;
+    const newAssistantId = rawNewAssistantId ? Number(rawNewAssistantId) || null : null;
+
     setAdding(true);
     let created = 0;
     let skipped = 0;
     try {
       for (const shift_date of dates) {
         try {
-          await api.createShift({
+          const createdShift = await api.createShift({
             shift_date,
             start_time: newShift.start_time,
             end_time: newShift.end_time,
@@ -214,6 +282,14 @@ export default function WeekShiftsPage() {
             room: roomTrim,
             doctor: doctorTrim,
           });
+          if (newAssistantId && createdShift?.id) {
+            const sessionForElig = { ...newShift, shift_date };
+            const eligible = eligibleAssistantsForSession(staff, shifts, sessionForElig, dateOverrides);
+            const isOverride = !eligible.some((a) => Number(a.id) === newAssistantId);
+            await api.assignShiftStaff(createdShift.id, newAssistantId, {
+              assigned_staff_manual_override: isOverride,
+            });
+          }
           created += 1;
         } catch (err) {
           if (isDuplicateShiftError(err)) {
@@ -258,6 +334,19 @@ export default function WeekShiftsPage() {
         room: roomTrim,
         doctor: doctorTrim,
       });
+
+      // Save doctors assistant assignment alongside the core session fields.
+      const rawAssistantId = editingShift.assigned_staff_id;
+      const newAssistantId =
+        rawAssistantId === "" || rawAssistantId == null ? null : Number(rawAssistantId) || null;
+      const eligible = eligibleAssistantsForSession(staff, shifts, editingShift, dateOverrides);
+      const isOverride = newAssistantId
+        ? !eligible.some((a) => Number(a.id) === newAssistantId)
+        : false;
+      await api.assignShiftStaff(editingShift.id, newAssistantId, {
+        assigned_staff_manual_override: isOverride,
+      });
+
       setEditingShift(null);
       await load();
     } catch (err) {
@@ -273,6 +362,44 @@ export default function WeekShiftsPage() {
       await load();
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  /** Save receptionist combo selection for a clinic-day block. */
+  async function handleReceptionistChange(isoDate, clinicName, newLabel, combos, unavailableCombos) {
+    const key = `${isoDate}\0${clinicName}`;
+    setError(null);
+    try {
+      if (!newLabel) {
+        await api.putClinicDayReceptionistSlots({ shift_date: isoDate, clinic: clinicName, staffIds: [] });
+        setSelectedReceptionistByBlock((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setReceptionistManualOverrideByBlock((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      } else {
+        // Check available combos first; fall back to unavailable (manual override).
+        const availableCombo = combos.find((c) => c.label === newLabel);
+        const combo = availableCombo ?? (unavailableCombos ?? []).find((c) => c.label === newLabel);
+        if (!combo) return;
+        const isManual = !availableCombo;
+        const staffIds = combo.contributions.map((c) => Number(c.staffId));
+        await api.putClinicDayReceptionistSlots({
+          shift_date: isoDate,
+          clinic: clinicName,
+          staffIds,
+          manualOverrides: staffIds.map(() => isManual),
+        });
+        setSelectedReceptionistByBlock((prev) => ({ ...prev, [key]: newLabel }));
+        setReceptionistManualOverrideByBlock((prev) => ({ ...prev, [key]: isManual }));
+      }
+    } catch (e) {
+      setError(e.message);
     }
   }
 
@@ -292,6 +419,75 @@ export default function WeekShiftsPage() {
     }
     return m;
   }, [shifts, days]);
+
+  /** Fast id → staff lookup used in the session view cards. */
+  const staffById = useMemo(() => {
+    const m = new Map();
+    for (const p of staff) m.set(Number(p.id), p);
+    return m;
+  }, [staff]);
+
+  /**
+   * Per-clinic-day: receptionist combinations split into available and unavailable.
+   * Available  = all members pass eligibleReceptionistsForBlock for this window.
+   * Unavailable = at least one member does not (selecting one saves as manual override).
+   * Uses the same shared eligibility + combination logic as RotaPage.
+   */
+  const combinationCache = useMemo(() => {
+    const cache = new Map();
+    for (const iso of days) {
+      for (const [clinicName, sessions] of groupByClinic(byDate[iso] ?? [])) {
+        const key = `${iso}\0${clinicName}`;
+        const summary = computeClinicDaySummary(sessions);
+
+        // Eligible staff (pass availability window check).
+        const eligibleStaff = eligibleReceptionistsForBlock(
+          staff,
+          clinicName,
+          iso,
+          summary.required_start,
+          summary.required_end,
+          dateOverrides
+        );
+        const eligibleIds = new Set(eligibleStaff.map((p) => Number(p.id)));
+
+        // All receptionists allowed at this clinic regardless of time availability.
+        const allForBlock = staff
+          .filter(
+            (p) =>
+              String(p.role || "").trim().toLowerCase() === "receptionist" &&
+              staffAllowedAtClinic(p, clinicName)
+          )
+          .map((p) => ({
+            id: p.id,
+            name: p.name,
+            capacity: p.capacity ?? 1,
+            staff_type: p.staff_type ?? "Full time",
+          }));
+
+        // Generate all combinations (available + unavailable) from the full pool.
+        const allCombos = generateReceptionistCombinations(allForBlock, summary.required_capacity);
+        const combos = allCombos.filter((c) =>
+          c.contributions.every((contrib) => eligibleIds.has(Number(contrib.staffId)))
+        );
+        const unavailableCombos = allCombos.filter((c) =>
+          c.contributions.some((contrib) => !eligibleIds.has(Number(contrib.staffId)))
+        );
+
+        cache.set(key, { summary, combos, unavailableCombos });
+      }
+    }
+    return cache;
+  }, [staff, dateOverrides, byDate, days]);
+
+  /** Per-session: eligible doctors assistants (used for validity display in view mode). */
+  const assistantEligibilityCache = useMemo(() => {
+    const cache = new Map();
+    for (const s of shifts) {
+      cache.set(s.id, eligibleAssistantsForSession(staff, shifts, s, dateOverrides));
+    }
+    return cache;
+  }, [staff, shifts, dateOverrides]);
 
   return (
     <div>
@@ -389,6 +585,17 @@ export default function WeekShiftsPage() {
               />
             </div>
             <div>
+              <label>Assistant</label>
+              <AssistantSelect
+                value={newShift.assistant}
+                onChange={(e) => setNewShift((s) => ({ ...s, assistant: e.target.value }))}
+                session={newShift}
+                staffList={staff}
+                allShifts={shifts}
+                dateOverrides={dateOverrides}
+              />
+            </div>
+            <div>
               <label>Repeat</label>
               <select
                 value={newShift.repeat_mode}
@@ -431,120 +638,289 @@ export default function WeekShiftsPage() {
               {byDate[iso].length === 0 && (
                 <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--muted)" }}>No sessions</p>
               )}
-              {groupByClinic(byDate[iso]).map(([clinicName, list]) => (
-                <div key={clinicName} style={{ marginBottom: "0.75rem" }}>
-                  <div
-                    style={{
-                      fontSize: "0.75rem",
-                      fontWeight: 600,
-                      color: "var(--muted)",
-                      marginBottom: "0.35rem",
-                    }}
-                  >
-                    {clinicName}
+              {groupByClinic(byDate[iso]).map(([clinicName, list]) => {
+                const blockKey = `${iso}\0${clinicName}`;
+                const { combos, unavailableCombos } =
+                  combinationCache.get(blockKey) ?? { combos: [], unavailableCombos: [] };
+                const selectedLabel = selectedReceptionistByBlock[blockKey] ?? null;
+                const rxInvalid =
+                  Boolean(selectedLabel) && !receptionistComboIsCurrentlyValid(selectedLabel, combos);
+
+                return (
+                  <div key={clinicName} style={{ marginBottom: "0.75rem" }}>
+                    {/* Clinic heading */}
+                    <div
+                      style={{
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "var(--muted)",
+                        marginBottom: "0.25rem",
+                      }}
+                    >
+                      {clinicName}
+                    </div>
+
+                    {/* Receptionist assignment — once per clinic-day block, NOT per session */}
+                    <div
+                      style={{
+                        fontSize: "0.75rem",
+                        marginBottom: "0.4rem",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "baseline",
+                        gap: "0.3rem",
+                      }}
+                    >
+                      <span style={{ color: "var(--muted)" }}>Receptionist:</span>
+                      {/* Fix 2: show full label in red when invalid, matching assistant/doctor pattern */}
+                      {rxInvalid && selectedLabel && (
+                        <span className="rota-assignment-invalid">
+                          {selectedLabel} (unavailable)
+                        </span>
+                      )}
+                      {/* Fix 3: use Available optgroup to match doctor/assistant dropdown style */}
+                      <select
+                        value={rxInvalid ? "" : (selectedLabel ?? "")}
+                        onChange={(e) =>
+                          void handleReceptionistChange(
+                            iso, clinicName, e.target.value, combos, unavailableCombos
+                          )
+                        }
+                        style={{ fontSize: "0.75rem" }}
+                      >
+                        <option value="">— Unassigned —</option>
+                        {combos.length > 0 && (
+                          <optgroup label="Available">
+                            {combos.map((c) => (
+                              <option key={c.label} value={c.label}>{c.label}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {unavailableCombos.length > 0 && (
+                          <optgroup label="Unavailable">
+                            {unavailableCombos.map((c) => (
+                              <option key={c.label} value={c.label}>{c.label}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                      {!rxInvalid && selectedLabel && receptionistManualOverrideByBlock[blockKey] && (
+                        <span className="rota-manual-override-label" style={{ fontSize: "0.7rem" }}>
+                          (manual)
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Session cards */}
+                    {list.map((s) =>
+                      editingShift?.id === s.id ? (
+                        <form key={s.id} className="shift-block" onSubmit={handleSaveShiftEdit}>
+                          <div className="form-row" style={{ flexWrap: "wrap", gap: "0.35rem" }}>
+                            <div>
+                              <label>Date</label>
+                              <select
+                                value={editingShift.shift_date}
+                                onChange={(e) =>
+                                  setEditingShift((sh) => ({ ...sh, shift_date: e.target.value }))
+                                }
+                              >
+                                {days.map((d, j) => (
+                                  <option key={d} value={d}>
+                                    {WEEKDAY_LABELS[j]} {d}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label>Start</label>
+                              <input
+                                type="time"
+                                value={editingShift.start_time}
+                                onChange={(e) =>
+                                  setEditingShift((sh) => ({ ...sh, start_time: e.target.value }))
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label>End</label>
+                              <input
+                                type="time"
+                                value={editingShift.end_time}
+                                onChange={(e) =>
+                                  setEditingShift((sh) => ({ ...sh, end_time: e.target.value }))
+                                }
+                              />
+                            </div>
+                            <div style={{ flex: "1 1 6rem" }}>
+                              <label>Clinic</label>
+                              <select
+                                value={editingShift.clinic}
+                                onChange={(e) => {
+                                  const clinic = e.target.value;
+                                  setEditingShift((sh) => ({
+                                    ...sh,
+                                    clinic,
+                                    room: (CLINIC_ROOMS[clinic] ?? [""])[0],
+                                  }));
+                                }}
+                                required
+                              >
+                                {CLINIC_NAMES.map((c) => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                            </div>
+                            <div style={{ flex: "1 1 5rem" }}>
+                              <label>Room</label>
+                              <select
+                                value={editingShift.room}
+                                onChange={(e) =>
+                                  setEditingShift((sh) => ({ ...sh, room: e.target.value }))
+                                }
+                                required
+                              >
+                                {(CLINIC_ROOMS[editingShift.clinic] ?? []).map((r) => (
+                                  <option key={r} value={r}>{r}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div style={{ flex: "1 1 6rem" }}>
+                              <label>Doctor</label>
+                              <DoctorSelect
+                                value={editingShift.doctor}
+                                onChange={(e) =>
+                                  setEditingShift((sh) => ({ ...sh, doctor: e.target.value }))
+                                }
+                                isoDate={editingShift.shift_date}
+                                startTime={editingShift.start_time}
+                                endTime={editingShift.end_time}
+                                clinicName={editingShift.clinic}
+                                staffList={staff}
+                                dateOverrides={dateOverrides}
+                                anchorIso={anchorIso}
+                                required
+                              />
+                            </div>
+                            <div style={{ flex: "1 1 6rem" }}>
+                              <label>Assistant</label>
+                              <AssistantSelect
+                                value={editingShift.assigned_staff_id ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setEditingShift((sh) => ({
+                                    ...sh,
+                                    assigned_staff_id: v !== "" ? Number(v) : null,
+                                  }));
+                                }}
+                                session={editingShift}
+                                staffList={staff}
+                                allShifts={shifts}
+                                dateOverrides={dateOverrides}
+                              />
+                            </div>
+                          </div>
+                          <div
+                            style={{ marginTop: "0.35rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}
+                          >
+                            <button type="submit">Save</button>
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => setEditingShift(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div key={s.id} className="shift-block">
+                          <div>
+                            {s.start_time}–{s.end_time}
+                          </div>
+                          <div className="meta">Clinic: {String(s.clinic || "").trim() || "—"}</div>
+                          <div className="meta">Room: {String(s.room || "").trim() || "—"}</div>
+                          {/* Doctor — same invalid-state check used by RotaPage */}
+                          {(() => {
+                            const doctorName = String(s.doctor || "").trim();
+                            const doctorStaff = doctorName
+                              ? staff.find(
+                                  (p) =>
+                                    String(p.role ?? "").trim().toLowerCase() === "doctor" &&
+                                    p.name === doctorName
+                                )
+                              : null;
+                            const doctorIsUnavailable =
+                              Boolean(doctorStaff) &&
+                              !isStaffAvailableForShiftWindow(
+                                doctorStaff,
+                                s.shift_date,
+                                dateStringToDayOfWeek(s.shift_date),
+                                s.start_time,
+                                s.end_time,
+                                dateOverrides
+                              );
+                            return (
+                              <div className="meta">
+                                Doctor:{" "}
+                                {doctorIsUnavailable ? (
+                                  <span className="rota-assignment-invalid">
+                                    {doctorName} (unavailable)
+                                  </span>
+                                ) : (
+                                  doctorName || "—"
+                                )}
+                              </div>
+                            );
+                          })()}
+                          {/* Doctors assistant — session level */}
+                          {(() => {
+                            const assignedId = s.assigned_staff_id ?? null;
+                            const assigned = assignedId ? staffById.get(Number(assignedId)) : null;
+                            const eligible = assistantEligibilityCache.get(s.id) ?? [];
+                            const isInvalid =
+                              Boolean(assignedId) &&
+                              !eligible.some((a) => Number(a.id) === Number(assignedId));
+                            return (
+                              <div className="meta">
+                                Assistant:{" "}
+                                {assignedId ? (
+                                  <span className={isInvalid ? "rota-assignment-invalid" : undefined}>
+                                    {assigned?.name ?? `Staff #${assignedId}`}
+                                    {isInvalid ? " (unavailable)" : ""}
+                                  </span>
+                                ) : (
+                                  "—"
+                                )}
+                              </div>
+                            );
+                          })()}
+                          <div
+                            style={{
+                              marginTop: "0.35rem",
+                              display: "flex",
+                              gap: "0.35rem",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="secondary"
+                              onClick={() => setEditingShift({ ...s })}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="danger"
+                              onClick={() => handleDelete(s.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    )}
                   </div>
-                  {list.map((s) =>
-                    editingShift?.id === s.id ? (
-                      <form key={s.id} className="shift-block" onSubmit={handleSaveShiftEdit}>
-                        <div className="form-row" style={{ flexWrap: "wrap", gap: "0.35rem" }}>
-                          <div>
-                            <label>Date</label>
-                            <select
-                              value={editingShift.shift_date}
-                              onChange={(e) => setEditingShift((sh) => ({ ...sh, shift_date: e.target.value }))}
-                            >
-                              {days.map((d, j) => (
-                                <option key={d} value={d}>
-                                  {WEEKDAY_LABELS[j]} {d}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label>Start</label>
-                            <input
-                              type="time"
-                              value={editingShift.start_time}
-                              onChange={(e) => setEditingShift((sh) => ({ ...sh, start_time: e.target.value }))}
-                            />
-                          </div>
-                          <div>
-                            <label>End</label>
-                            <input
-                              type="time"
-                              value={editingShift.end_time}
-                              onChange={(e) => setEditingShift((sh) => ({ ...sh, end_time: e.target.value }))}
-                            />
-                          </div>
-                          <div style={{ flex: "1 1 6rem" }}>
-                            <label>Clinic</label>
-                            <select
-                              value={editingShift.clinic}
-                              onChange={(e) => {
-                                const clinic = e.target.value;
-                                setEditingShift((sh) => ({ ...sh, clinic, room: (CLINIC_ROOMS[clinic] ?? [""])[0] }));
-                              }}
-                              required
-                            >
-                              {CLINIC_NAMES.map((c) => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                          </div>
-                          <div style={{ flex: "1 1 5rem" }}>
-                            <label>Room</label>
-                            <select
-                              value={editingShift.room}
-                              onChange={(e) => setEditingShift((sh) => ({ ...sh, room: e.target.value }))}
-                              required
-                            >
-                              {(CLINIC_ROOMS[editingShift.clinic] ?? []).map((r) => (
-                                <option key={r} value={r}>{r}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div style={{ flex: "1 1 6rem" }}>
-                            <label>Doctor</label>
-                            <DoctorSelect
-                              value={editingShift.doctor}
-                              onChange={(e) => setEditingShift((sh) => ({ ...sh, doctor: e.target.value }))}
-                              isoDate={editingShift.shift_date}
-                              startTime={editingShift.start_time}
-                              endTime={editingShift.end_time}
-                              clinicName={editingShift.clinic}
-                              staffList={staff}
-                              dateOverrides={dateOverrides}
-                              anchorIso={anchorIso}
-                              required
-                            />
-                          </div>
-                        </div>
-                        <div style={{ marginTop: "0.35rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                          <button type="submit">Save</button>
-                          <button type="button" className="secondary" onClick={() => setEditingShift(null)}>
-                            Cancel
-                          </button>
-                        </div>
-                      </form>
-                    ) : (
-                      <div key={s.id} className="shift-block">
-                        <div>
-                          {s.start_time}–{s.end_time}
-                        </div>
-                        <div className="meta">Clinic: {String(s.clinic || "").trim() || "—"}</div>
-                        <div className="meta">Room: {String(s.room || "").trim() || "—"}</div>
-                        <div className="meta">Doctor: {String(s.doctor || "").trim() || "—"}</div>
-                        <div style={{ marginTop: "0.35rem", display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-                          <button type="button" className="secondary" onClick={() => setEditingShift({ ...s })}>
-                            Edit
-                          </button>
-                          <button type="button" className="danger" onClick={() => handleDelete(s.id)}>
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           ))}
         </div>

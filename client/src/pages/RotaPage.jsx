@@ -14,6 +14,11 @@ import { dateStringToDayOfWeek, eligibleAssistantsForSession, eligibleReceptioni
 import { biweekCycleIndexFromIsoDate } from "../biweekAnchor.js";
 import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
 import { toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
+import {
+  receptionistComboIsCurrentlyValid,
+  receptionistAssignmentDisplayState,
+  assistantAssignmentDisplayState,
+} from "../rotaDisplay.js";
 
 function timeToMinutes(t) {
   const [h, m] = String(t).split(":").map(Number);
@@ -50,24 +55,6 @@ function assistantEditAnchorId(iso, clinicName, sessionId, sessionIndex) {
   return `rota-assistant-edit-${enc(iso)}_${enc(clinicName)}_${enc(sessionId)}_row${sessionIndex}`;
 }
 
-function receptionistComboIsCurrentlyValid(selectedComboLabel, combos) {
-  if (!selectedComboLabel) return true;
-  return combos.some((c) => c.label === selectedComboLabel);
-}
-
-/** UI slot state for rota display; uses final filtered combo / eligible lists only. */
-function receptionistAssignmentDisplayState(selectedComboLabel, combos, requiredCapacity) {
-  if (selectedComboLabel) return "assigned";
-  if (combos.length > 0) return "unassigned";
-  if (requiredCapacity <= 0) return "unassigned";
-  return "gap";
-}
-
-function assistantAssignmentDisplayState(assignedId, eligibleAssistants) {
-  if (assignedId) return "assigned";
-  if (eligibleAssistants.length > 0) return "unassigned";
-  return "gap";
-}
 
 export default function RotaPage() {
   const { anchorIso } = useBiweekAnchor();
