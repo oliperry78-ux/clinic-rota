@@ -98,7 +98,7 @@ function DoctorSelect({ value, onChange, isoDate, startTime, endTime, clinicName
   );
   const showFallback = Boolean(value) && !knownNames.has(value);
   return (
-    <select value={value} onChange={onChange} required={required}>
+    <select value={value} onChange={onChange} required={required} style={{ width: "100%" }}>
       <option value="">Select a doctor…</option>
       {showFallback && <option value={value}>— keep current ({value}) —</option>}
       {available.length > 0 && (
@@ -137,7 +137,7 @@ function AssistantSelect({ value, onChange, session, staffList, allShifts, dateO
   const knownIds = new Set([...eligible, ...unavailable].map((a) => Number(a.id)));
   const showFallback = numValue !== "" && !knownIds.has(numValue);
   return (
-    <select value={numValue} onChange={onChange}>
+    <select value={numValue} onChange={onChange} style={{ width: "100%" }}>
       <option value="">— Unassigned —</option>
       {showFallback && (
         <option value={numValue}>— keep current (Staff #{numValue}) —</option>
@@ -946,6 +946,7 @@ export default function WeekShiftsPage() {
                                   }));
                                 }}
                                 required
+                                style={{ width: "100%" }}
                               >
                                 {CLINIC_NAMES.map((c) => <option key={c} value={c}>{c}</option>)}
                               </select>
@@ -958,6 +959,7 @@ export default function WeekShiftsPage() {
                                   setEditingShift((sh) => ({ ...sh, room: e.target.value }))
                                 }
                                 required
+                                style={{ width: "100%" }}
                               >
                                 {(CLINIC_ROOMS[editingShift.clinic] ?? []).map((r) => (
                                   <option key={r} value={r}>{r}</option>
