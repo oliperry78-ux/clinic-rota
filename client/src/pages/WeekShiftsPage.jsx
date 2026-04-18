@@ -207,8 +207,8 @@ function ReceptionistPicker({
     fontFamily: "inherit",
     fontWeight: "normal",
     lineHeight: "normal",
-    minWidth: "5rem",
-    maxWidth: "12rem",
+    minWidth: "3.5rem",
+    maxWidth: "9rem",
   };
 
   const groupHeaderStyle = {
