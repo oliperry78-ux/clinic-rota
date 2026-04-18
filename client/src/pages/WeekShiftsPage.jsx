@@ -193,7 +193,7 @@ function ReceptionistPicker({
   const showRed = rxInvalid || isManualOverride;
 
   const triggerStyle = {
-    display: "inline-flex",
+    display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: "0.25rem",
@@ -207,8 +207,7 @@ function ReceptionistPicker({
     fontFamily: "inherit",
     fontWeight: "normal",
     lineHeight: "normal",
-    minWidth: "3.5rem",
-    maxWidth: "9rem",
+    width: "100%",
   };
 
   const groupHeaderStyle = {
@@ -238,7 +237,7 @@ function ReceptionistPicker({
   }
 
   return (
-    <div ref={rootRef} style={{ position: "relative", display: "inline-block" }}>
+    <div ref={rootRef} style={{ position: "relative", display: "block" }}>
       <button type="button" style={triggerStyle} onClick={() => setOpen((v) => !v)}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {!selectedLabel ? (
@@ -879,8 +878,8 @@ export default function WeekShiftsPage() {
                     </div>
 
                     {/* Receptionist assignment — once per clinic-day block, NOT per session */}
-                    <div style={{ fontSize: "0.75rem", marginBottom: "0.4rem", display: "flex", alignItems: "baseline", gap: "0.3rem" }}>
-                      <span style={{ color: "var(--muted)" }}>Receptionist:</span>
+                    <div style={{ fontSize: "0.75rem", marginBottom: "0.4rem" }}>
+                      <div style={{ color: "var(--muted)", marginBottom: "0.2rem" }}>Receptionist:</div>
                       <ReceptionistPicker
                         combos={combos}
                         unavailableIndividuals={unavailableIndividuals}
