@@ -20,6 +20,7 @@ import {
 } from "../rotaEligibility.js";
 import { receptionistComboIsCurrentlyValid } from "../rotaDisplay.js";
 import { addDaysToISO, toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
+import { computeCopyForwardAssignments } from "../rotaCopyForward.js";
 
 const REPEAT_ONCE = "once";
 const REPEAT_WEEKLY = "weekly";
@@ -356,6 +357,7 @@ export default function WeekShiftsPage() {
   const [receptionistManualOverrideByBlock, setReceptionistManualOverrideByBlock] = useState({});
   // Record<blockKey, number[]> — staff IDs selected as individual unavailable overrides.
   const [overrideSelectionByBlock, setOverrideSelectionByBlock] = useState({});
+  const [copyForwardBusy, setCopyForwardBusy] = useState(false);
 
   /**
    * Single load that fetches everything for the current week together so
@@ -635,6 +637,81 @@ export default function WeekShiftsPage() {
     return m;
   }, [shifts, days]);
 
+  /**
+   * Adapter: reshape byDate into the Record<string, Map<clinic, sessions[]>> format
+   * expected by computeCopyForwardAssignments (empty clinic normalised to "").
+   */
+  const byDateAndClinic = useMemo(() => {
+    const result = {};
+    for (const iso of days) {
+      const clinicMap = new Map();
+      for (const s of byDate[iso] ?? []) {
+        const c = String(s.clinic || "").trim();
+        if (!clinicMap.has(c)) clinicMap.set(c, []);
+        clinicMap.get(c).push(s);
+      }
+      result[iso] = clinicMap;
+    }
+    return result;
+  }, [byDate, days]);
+
+  async function runCarryForward() {
+    setCopyForwardBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const { receptionist, receptionistSlots, receptionistSlotManualOverrides, assistants } =
+        await computeCopyForwardAssignments({
+          api,
+          staff,
+          sourceStartISO: startISO,
+          sourceEndISO: endISO,
+          sourceDays: days,
+          sourceByDateAndClinic: byDateAndClinic,
+          selectedReceptionistByBlock,
+          receptionistManualOverrideByBlock,
+          getShiftAssignedAssistantId: (s) => s.assigned_staff_id,
+          mode: "weekly",
+          dateOverrides,
+        });
+
+      const rxPersist = Object.entries(receptionistSlots).map(([blockKey, staffIds]) => {
+        const i = blockKey.indexOf("\0");
+        const shift_date = blockKey.slice(0, i);
+        const clinic = blockKey.slice(i + 1);
+        const mo = receptionistSlotManualOverrides?.[blockKey];
+        const body = { shift_date, clinic, staffIds };
+        if (Array.isArray(mo) && mo.length === staffIds.length) body.manualOverrides = mo;
+        return api.putClinicDayReceptionistSlots(body);
+      });
+      const asPersist = Object.entries(assistants).map(([sid, aid]) =>
+        api.assignShiftStaff(Number(sid), aid, { assigned_staff_manual_override: false })
+      );
+      await Promise.all([...rxPersist, ...asPersist]);
+
+      setSelectedReceptionistByBlock((prev) => ({ ...prev, ...receptionist }));
+      setReceptionistManualOverrideByBlock((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(receptionist)) {
+          const flags = receptionistSlotManualOverrides?.[k];
+          next[k] = Array.isArray(flags) && flags.some(Boolean);
+        }
+        return next;
+      });
+
+      const nRx = Object.keys(receptionist).length;
+      const nAs = Object.keys(assistants).length;
+      setNotice(
+        `Carried forward: ${nRx} receptionist block${nRx !== 1 ? "s" : ""}, ${nAs} assistant session${nAs !== 1 ? "s" : ""}.`
+      );
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCopyForwardBusy(false);
+    }
+  }
+
   /** Fast id → staff lookup used in the session view cards. */
   const staffById = useMemo(() => {
     const m = new Map();
@@ -723,6 +800,14 @@ export default function WeekShiftsPage() {
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
             {startISO} → {endISO} (Mon–Sun)
           </span>
+          <button
+            type="button"
+            onClick={runCarryForward}
+            disabled={copyForwardBusy}
+            style={{ fontSize: "0.9rem" }}
+          >
+            {copyForwardBusy ? "Carrying forward…" : "Carry forward assignments"}
+          </button>
         </div>
 
         <form onSubmit={handleAdd} className="card" style={{ boxShadow: "none", marginBottom: "1rem" }}>
