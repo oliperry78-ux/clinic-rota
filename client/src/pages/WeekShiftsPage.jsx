@@ -476,15 +476,21 @@ export default function WeekShiftsPage() {
             room: roomTrim,
             doctor: doctorTrim,
           });
+          created += 1;
           if (newAssistantId && createdShift?.id) {
             const sessionForElig = { ...newShift, shift_date };
             const eligible = eligibleAssistantsForSession(staff, shifts, sessionForElig, dateOverrides);
-            const isOverride = !eligible.some((a) => Number(a.id) === newAssistantId);
-            await api.assignShiftStaff(createdShift.id, newAssistantId, {
-              assigned_staff_manual_override: isOverride,
-            });
+            const isEligible = eligible.some((a) => Number(a.id) === newAssistantId);
+            if (isEligible) {
+              try {
+                await api.assignShiftStaff(createdShift.id, newAssistantId, {
+                  assigned_staff_manual_override: false,
+                });
+              } catch (assignErr) {
+                console.warn("Assistant assignment failed for session on", shift_date, assignErr);
+              }
+            }
           }
-          created += 1;
         } catch (err) {
           if (isDuplicateShiftError(err)) {
             skipped += 1;
