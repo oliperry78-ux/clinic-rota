@@ -525,6 +525,17 @@ export default function WeekShiftsPage() {
       return;
     }
     setError(null);
+
+    // Capture the OLD block before the session is moved.
+    const originalShift = shifts.find((s) => s.id === editingShift.id);
+    const oldDate = originalShift ? String(originalShift.shift_date).trim() : null;
+    const oldClinic = originalShift
+      ? String(originalShift.clinic ?? "").trim() || "(no clinic)"
+      : null;
+    const newDate = String(editingShift.shift_date).trim();
+    const newClinic = clinicTrim;
+    const blockMoved = oldDate !== null && (oldDate !== newDate || oldClinic !== newClinic);
+
     try {
       await api.updateShift(editingShift.id, {
         shift_date: editingShift.shift_date,
@@ -548,6 +559,32 @@ export default function WeekShiftsPage() {
       });
 
       setEditingShift(null);
+
+      // If the session moved to a different block, clean up the old block if it is now empty.
+      if (blockMoved) {
+        const remaining = shifts.filter(
+          (s) =>
+            s.id !== editingShift.id &&
+            String(s.shift_date).trim() === oldDate &&
+            (String(s.clinic ?? "").trim() || "(no clinic)") === oldClinic
+        );
+        if (remaining.length === 0) {
+          const oldBlockKey = `${oldDate}\0${oldClinic}`;
+          try {
+            await api.putClinicDayReceptionistSlots({
+              shift_date: oldDate,
+              clinic: oldClinic,
+              staffIds: [],
+            });
+            setSelectedReceptionistByBlock((prev) => { const next = { ...prev }; delete next[oldBlockKey]; return next; });
+            setReceptionistManualOverrideByBlock((prev) => { const next = { ...prev }; delete next[oldBlockKey]; return next; });
+            setOverrideSelectionByBlock((prev) => { const next = { ...prev }; delete next[oldBlockKey]; return next; });
+          } catch (cleanupErr) {
+            console.warn("Could not clear receptionist slot after editing session to a new block:", cleanupErr);
+          }
+        }
+      }
+
       await load();
     } catch (err) {
       setError(err.message);
@@ -557,8 +594,38 @@ export default function WeekShiftsPage() {
   async function handleDelete(id) {
     if (!confirm("Delete this session?")) return;
     setError(null);
+    // Capture block info before the shift is removed from state.
+    const deletedShift = shifts.find((s) => s.id === id);
+    const blockDate = deletedShift ? String(deletedShift.shift_date).trim() : null;
+    const blockClinic = deletedShift
+      ? String(deletedShift.clinic ?? "").trim() || "(no clinic)"
+      : null;
     try {
       await api.deleteShift(id);
+      // If this was the last session in the block, remove the orphaned receptionist slot.
+      if (blockDate && blockClinic !== null) {
+        const remaining = shifts.filter(
+          (s) =>
+            s.id !== id &&
+            String(s.shift_date).trim() === blockDate &&
+            (String(s.clinic ?? "").trim() || "(no clinic)") === blockClinic
+        );
+        if (remaining.length === 0) {
+          const blockKey = `${blockDate}\0${blockClinic}`;
+          try {
+            await api.putClinicDayReceptionistSlots({
+              shift_date: blockDate,
+              clinic: blockClinic,
+              staffIds: [],
+            });
+            setSelectedReceptionistByBlock((prev) => { const next = { ...prev }; delete next[blockKey]; return next; });
+            setReceptionistManualOverrideByBlock((prev) => { const next = { ...prev }; delete next[blockKey]; return next; });
+            setOverrideSelectionByBlock((prev) => { const next = { ...prev }; delete next[blockKey]; return next; });
+          } catch (cleanupErr) {
+            console.warn("Could not clear receptionist slot after removing last session in block:", cleanupErr);
+          }
+        }
+      }
       await load();
     } catch (err) {
       setError(err.message);
