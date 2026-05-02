@@ -549,9 +549,14 @@ export default function RotaPage() {
       <section className="rota-page-section">
         <h2 className="rota-page-title">Rota (weekly)</h2>
         <div className="week-toolbar rota-week-toolbar">
-          <label>
-            Week containing{" "}
-            <input type="date" value={weekAnchor} onChange={(e) => setWeekAnchor(e.target.value)} />
+          <label style={{ fontWeight: 600, color: "#000" }}>
+            Working week{" "}
+            <input
+              type="date"
+              value={weekAnchor}
+              onChange={(e) => setWeekAnchor(e.target.value)}
+              style={{ borderColor: "var(--text)" }}
+            />
           </label>
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
             {formatDateUK(startISO)} → {formatDateUK(endISO)}

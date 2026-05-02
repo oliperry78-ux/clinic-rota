@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { formatDateUK } from "./dates.js";
 import { api } from "./api.js";
 import { configureBiweekWeek1Anchor, getBiweekWeek1AnchorMondayIso } from "./biweekAnchor.js";
 
@@ -69,7 +70,7 @@ export function useBiweekAnchor() {
   return ctx;
 }
 
-/** Header strip: editable “Week 1 starts” date (normalized to UTC Monday on save). */
+/** Header strip: editable biweekly cycle start date (normalized to UTC Monday on save). */
 export function BiweekAnchorBar() {
   const { anchorIso, reload, loadError } = useBiweekAnchor();
   const [draft, setDraft] = useState("");
@@ -125,18 +126,28 @@ export function BiweekAnchorBar() {
         fontSize: "0.8rem",
         color: "var(--muted)",
         marginBottom: "0.5rem",
+        borderBottom: "1px solid var(--border)",
+        paddingBottom: "0.5rem",
       }}
     >
       <span>
-        <strong style={{ color: "var(--text)" }}>Week 1 starts</strong> (UTC Monday):
+        <strong style={{ color: "var(--text)" }}>Biweekly cycle start (Week 1)</strong>
       </span>
-      <input type="date" value={draft} onChange={(e) => setDraft(e.target.value)} style={{ font: "inherit" }} />
+      <input
+        type="date"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        style={{ font: "inherit", opacity: 0.85 }}
+      />
       <button type="button" onClick={() => void save()} disabled={saving || !draft}>
         Save
       </button>
       {anchorIso ? (
-        <span title="Weeks are counted in UTC from this Monday; any chosen date is snapped to that week’s Monday.">
-          Using <code style={{ fontSize: "0.78rem" }}>{anchorIso}</code>
+        <span
+          title="Any chosen date is snapped to that week's Monday. Weeks are counted from this anchor."
+          style={{ color: "var(--text)", fontWeight: 600, fontSize: "0.85rem" }}
+        >
+          Using {formatDateUK(anchorIso)}
         </span>
       ) : null}
       {loadError ? <span style={{ color: "#b91c1c" }}>{loadError}</span> : null}

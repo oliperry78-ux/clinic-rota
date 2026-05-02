@@ -889,9 +889,14 @@ export default function WeekShiftsPage() {
           block. Repeating patterns create separate sessions for each date (not a linked series).
         </p>
         <div className="week-toolbar">
-          <label>
-            Week containing{" "}
-            <input type="date" value={weekAnchor} onChange={(e) => setWeekAnchor(e.target.value)} />
+          <label style={{ fontWeight: 600, color: "#000" }}>
+            Working week{" "}
+            <input
+              type="date"
+              value={weekAnchor}
+              onChange={(e) => setWeekAnchor(e.target.value)}
+              style={{ borderColor: "var(--text)" }}
+            />
           </label>
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
             {formatDateUK(startISO)} → {formatDateUK(endISO)} (Mon–Sun)
