@@ -52,3 +52,16 @@ export function weekDaysISO(startMondayISO) {
 }
 
 export const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/**
+ * Display-only: converts an ISO date string (YYYY-MM-DD) to UK format (DD/MM/YYYY).
+ * Uses pure string splitting — no Date object, no timezone conversion.
+ * Returns the input unchanged if it is missing or does not match the expected format.
+ */
+export function formatDateUK(isoDate) {
+  if (!isoDate) return isoDate ?? "";
+  const parts = String(isoDate).split("-");
+  if (parts.length !== 3 || parts[0].length !== 4) return String(isoDate);
+  const [y, m, d] = parts;
+  return `${d}/${m}/${y}`;
+}

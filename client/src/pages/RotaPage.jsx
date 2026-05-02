@@ -13,7 +13,7 @@ import { generateReceptionistCombinations } from "../receptionistCombinations.js
 import { dateStringToDayOfWeek, eligibleAssistantsForSession, eligibleReceptionistsForBlock, isStaffAvailableForShiftWindow } from "../rotaEligibility.js";
 import { biweekCycleIndexFromIsoDate } from "../biweekAnchor.js";
 import { useBiweekAnchor } from "../BiweekAnchorContext.jsx";
-import { toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
+import { formatDateUK, toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
 import {
   receptionistComboIsCurrentlyValid,
   receptionistAssignmentDisplayState,
@@ -554,7 +554,7 @@ export default function RotaPage() {
             <input type="date" value={weekAnchor} onChange={(e) => setWeekAnchor(e.target.value)} />
           </label>
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-            {startISO} → {endISO}
+            {formatDateUK(startISO)} → {formatDateUK(endISO)}
             {anchorIso ? (
               <>
                 {" "}
@@ -603,7 +603,7 @@ export default function RotaPage() {
             <div className="rota-grid-header-corner">Clinic</div>
             {days.map((iso, idx) => (
               <div key={iso} className="rota-grid-header-day">
-                {WEEKDAY_LABELS[idx]} · {iso}
+                {WEEKDAY_LABELS[idx]} · {formatDateUK(iso)}
               </div>
             ))}
 

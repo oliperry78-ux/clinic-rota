@@ -19,7 +19,7 @@ import {
   staffAllowedAtClinic,
 } from "../rotaEligibility.js";
 import { receptionistComboIsCurrentlyValid } from "../rotaDisplay.js";
-import { addDaysToISO, toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
+import { addDaysToISO, formatDateUK, toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
 import { computeCopyForwardAssignments } from "../rotaCopyForward.js";
 
 const REPEAT_ONCE = "once";
@@ -894,7 +894,7 @@ export default function WeekShiftsPage() {
             <input type="date" value={weekAnchor} onChange={(e) => setWeekAnchor(e.target.value)} />
           </label>
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
-            {startISO} → {endISO} (Mon–Sun)
+            {formatDateUK(startISO)} → {formatDateUK(endISO)} (Mon–Sun)
           </span>
           <button
             type="button"
@@ -917,7 +917,7 @@ export default function WeekShiftsPage() {
               >
                 {days.map((iso, idx) => (
                   <option key={iso} value={iso}>
-                    {WEEKDAY_LABELS[idx]} {iso}
+                    {WEEKDAY_LABELS[idx]} {formatDateUK(iso)}
                   </option>
                 ))}
               </select>
@@ -1027,7 +1027,7 @@ export default function WeekShiftsPage() {
           {days.map((iso, i) => (
             <div key={iso} className="day-column">
               <h3>
-                {WEEKDAY_LABELS[i]} · {iso}
+                {WEEKDAY_LABELS[i]} · {formatDateUK(iso)}
               </h3>
               {byDate[iso].length === 0 && (
                 <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--muted)" }}>No sessions</p>
@@ -1089,7 +1089,7 @@ export default function WeekShiftsPage() {
                               >
                                 {days.map((d, j) => (
                                   <option key={d} value={d}>
-                                    {WEEKDAY_LABELS[j]} {d}
+                                    {WEEKDAY_LABELS[j]} {formatDateUK(d)}
                                   </option>
                                 ))}
                               </select>
