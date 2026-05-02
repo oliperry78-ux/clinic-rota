@@ -328,9 +328,23 @@ function ReceptionistPicker({
   );
 }
 
+/** localStorage key for the Weekly Shifts visible week.
+ *  Stores the "week containing" anchor date only — NOT the biweekly Week 1 anchor. */
+const LS_WEEK_SHIFTS_ANCHOR = "clinicRota_weekShifts_weekAnchor";
+
+function readSavedWeekAnchor(today) {
+  try {
+    const raw = localStorage.getItem(LS_WEEK_SHIFTS_ANCHOR);
+    if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  } catch {
+    // localStorage unavailable (private browsing, quota exceeded, etc.) — fall back silently
+  }
+  return today;
+}
+
 export default function WeekShiftsPage() {
   const today = toISODate(new Date());
-  const [weekAnchor, setWeekAnchor] = useState(today);
+  const [weekAnchor, setWeekAnchor] = useState(() => readSavedWeekAnchor(today));
   const { startISO, endISO } = weekRangeFromAnyDate(weekAnchor);
   const days = weekDaysISO(startISO);
 
@@ -425,6 +439,15 @@ export default function WeekShiftsPage() {
       setNewShift((s) => ({ ...s, shift_date: startISO }));
     }
   }, [days, newShift.shift_date, startISO]);
+
+  // Persist the visible week so it survives page navigation (unrelated to the biweekly anchor).
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_WEEK_SHIFTS_ANCHOR, weekAnchor);
+    } catch {
+      // Ignore write failures (private browsing, quota, etc.)
+    }
+  }, [weekAnchor]);
 
   async function handleAdd(e) {
     e.preventDefault();
