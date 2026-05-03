@@ -400,11 +400,25 @@ export default function WeekShiftsPage() {
       setShifts(list);
       const loadedRx = receptionistSelectionMapFromApiPayload(rxPayload, sList);
       const loadedRxManual = receptionistManualOverrideMapFromApiPayload(rxPayload);
+      // Defensive orphan filter: only keep receptionist slot data for date+clinic blocks
+      // that have at least one session in the loaded shifts list. Keys use the same
+      // ${shift_date}\0${clinic} format as rotaPersistence.js to ensure exact matching.
+      const validBlockKeys = new Set(
+        (list ?? []).map(
+          (s) => `${String(s.shift_date ?? "").trim()}\0${String(s.clinic ?? "").trim()}`
+        )
+      );
+      const filteredRx = Object.fromEntries(
+        Object.entries(loadedRx).filter(([k]) => validBlockKeys.has(k))
+      );
+      const filteredRxManual = Object.fromEntries(
+        Object.entries(loadedRxManual).filter(([k]) => validBlockKeys.has(k))
+      );
       setSelectedReceptionistByBlock((prev) =>
-        mergeReceptionistStateForDateRange(prev, loadedRx, startISO, endISO)
+        mergeReceptionistStateForDateRange(prev, filteredRx, startISO, endISO)
       );
       setReceptionistManualOverrideByBlock((prev) =>
-        mergeReceptionistManualOverrideForDateRange(prev, loadedRxManual, startISO, endISO)
+        mergeReceptionistManualOverrideForDateRange(prev, filteredRxManual, startISO, endISO)
       );
       // Hydrate override checkboxes: for manually-overridden blocks, record the individual staff IDs.
       const loadedOverrides = {};
@@ -412,9 +426,10 @@ export default function WeekShiftsPage() {
         const date = String(block.shift_date ?? "").trim();
         const clinic = String(block.clinic ?? "").trim();
         if (!date) continue;
+        const key = `${date}\0${clinic}`;
+        if (!validBlockKeys.has(key)) continue;
         const slots = block.slots ?? [];
         if (slots.some((sl) => sl.manual_override === true)) {
-          const key = `${date}\0${clinic}`;
           loadedOverrides[key] = slots
             .filter((sl) => sl.staff_id != null && sl.staff_id !== "")
             .map((sl) => Number(sl.staff_id));
