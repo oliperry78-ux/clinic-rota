@@ -18,7 +18,11 @@ import {
   isStaffAvailableForShiftWindow,
   staffAllowedAtClinic,
 } from "../rotaEligibility.js";
-import { receptionistComboIsCurrentlyValid } from "../rotaDisplay.js";
+import {
+  receptionistComboIsCurrentlyValid,
+  receptionistAssignmentDisplayState,
+  staffAssignmentDisplayState,
+} from "../rotaDisplay.js";
 import { addDaysToISO, formatDateUK, toISODate, weekDaysISO, weekRangeFromAnyDate, WEEKDAY_LABELS } from "../dates.js";
 import { computeCopyForwardAssignments } from "../rotaCopyForward.js";
 
@@ -175,6 +179,7 @@ function ReceptionistPicker({
   overrideIds,
   isManualOverride,
   rxInvalid,
+  rxDisplayState,
   onComboSelect,
   onOverrideToggle,
   onClear,
@@ -190,8 +195,6 @@ function ReceptionistPicker({
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [open]);
-
-  const showRed = rxInvalid || isManualOverride;
 
   const triggerStyle = {
     display: "flex",
@@ -242,9 +245,15 @@ function ReceptionistPicker({
       <button type="button" style={triggerStyle} onClick={() => setOpen((v) => !v)}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {!selectedLabel ? (
-            <span style={{ color: "GrayText" }}>— Unassigned —</span>
-          ) : showRed ? (
-            <span className="rota-assignment-invalid">{selectedLabel}</span>
+            rxDisplayState === "gap" ? (
+              <span className="rota-assignment-gap">Unassigned GAP</span>
+            ) : (
+              <span className="rota-assignment-invalid">Unassigned</span>
+            )
+          ) : isManualOverride ? (
+            <span className="rota-assignment-invalid">{selectedLabel} (override)</span>
+          ) : rxInvalid ? (
+            <span className="rota-assignment-invalid">{selectedLabel} (unavailable)</span>
           ) : (
             selectedLabel
           )}
@@ -503,15 +512,13 @@ export default function WeekShiftsPage() {
           if (newAssistantId && createdShift?.id) {
             const sessionForElig = { ...newShift, shift_date };
             const eligible = eligibleAssistantsForSession(staff, shifts, sessionForElig, dateOverrides);
-            const isEligible = eligible.some((a) => Number(a.id) === newAssistantId);
-            if (isEligible) {
-              try {
-                await api.assignShiftStaff(createdShift.id, newAssistantId, {
-                  assigned_staff_manual_override: false,
-                });
-              } catch (assignErr) {
-                console.warn("Assistant assignment failed for session on", shift_date, assignErr);
-              }
+            const isOverride = !eligible.some((a) => Number(a.id) === newAssistantId);
+            try {
+              await api.assignShiftStaff(createdShift.id, newAssistantId, {
+                assigned_staff_manual_override: isOverride,
+              });
+            } catch (assignErr) {
+              console.warn("Assistant assignment failed for session on", shift_date, assignErr);
             }
           }
         } catch (err) {
@@ -875,6 +882,15 @@ export default function WeekShiftsPage() {
     return cache;
   }, [staff, shifts, dateOverrides]);
 
+  /** Per-session: available doctors (used for unassigned/gap display in view mode). */
+  const doctorEligibilityCache = useMemo(() => {
+    const cache = new Map();
+    for (const s of shifts) {
+      cache.set(s.id, classifyDoctors(s.shift_date, s.start_time, s.end_time, s.clinic, staff, dateOverrides).available);
+    }
+    return cache;
+  }, [staff, shifts, dateOverrides]);
+
   return (
     <div>
       {error && <div className="error-banner">{error}</div>}
@@ -1039,15 +1055,21 @@ export default function WeekShiftsPage() {
               )}
               {groupByClinic(byDate[iso]).map(([clinicName, list]) => {
                 const blockKey = `${iso}\0${clinicName}`;
-                const { combos, unavailableIndividuals } =
-                  combinationCache.get(blockKey) ?? { combos: [], unavailableIndividuals: [] };
+                const { combos, unavailableIndividuals, summary: blockSummary } =
+                  combinationCache.get(blockKey) ?? { combos: [], unavailableIndividuals: [], summary: { required_capacity: 0 } };
                 const selectedLabel = selectedReceptionistByBlock[blockKey] ?? null;
                 const overrideIds = overrideSelectionByBlock[blockKey] ?? [];
+                const isManualOverride = Boolean(receptionistManualOverrideByBlock[blockKey]);
                 // Only flag as invalid when the saved label is not a valid combo AND not a manual override.
                 const rxInvalid =
                   Boolean(selectedLabel) &&
                   !receptionistComboIsCurrentlyValid(selectedLabel, combos) &&
-                  !receptionistManualOverrideByBlock[blockKey];
+                  !isManualOverride;
+                const rxDisplayState = receptionistAssignmentDisplayState(
+                  selectedLabel,
+                  combos,
+                  blockSummary?.required_capacity ?? 0
+                );
 
                 return (
                   <div key={clinicName} style={{ marginBottom: "0.75rem" }}>
@@ -1071,8 +1093,9 @@ export default function WeekShiftsPage() {
                         unavailableIndividuals={unavailableIndividuals}
                         selectedLabel={selectedLabel}
                         overrideIds={overrideIds}
-                        isManualOverride={Boolean(receptionistManualOverrideByBlock[blockKey])}
+                        isManualOverride={isManualOverride}
                         rxInvalid={rxInvalid}
+                        rxDisplayState={rxDisplayState}
                         onComboSelect={(label) => void handleReceptionistChange(iso, clinicName, label, combos)}
                         onOverrideToggle={(id, checked) => void handleOverrideChange(iso, clinicName, id, checked)}
                         onClear={() => void handleReceptionistChange(iso, clinicName, "", combos)}
@@ -1207,7 +1230,7 @@ export default function WeekShiftsPage() {
                           </div>
                           <div className="meta">Clinic: {String(s.clinic || "").trim() || "—"}</div>
                           <div className="meta">Room: {String(s.room || "").trim() || "—"}</div>
-                          {/* Doctor — same invalid-state check used by RotaPage */}
+                          {/* Doctor */}
                           {(() => {
                             const doctorName = String(s.doctor || "").trim();
                             const doctorStaff = doctorName
@@ -1227,15 +1250,23 @@ export default function WeekShiftsPage() {
                                 s.end_time,
                                 dateOverrides
                               );
+                            const availableDoctors = doctorEligibilityCache.get(s.id) ?? [];
+                            const doctorState = staffAssignmentDisplayState(doctorName, availableDoctors);
                             return (
                               <div className="meta">
                                 Doctor:{" "}
-                                {doctorIsUnavailable ? (
-                                  <span className="rota-assignment-invalid">
-                                    {doctorName} (unavailable)
-                                  </span>
+                                {doctorState === "assigned" ? (
+                                  doctorIsUnavailable ? (
+                                    <span className="rota-assignment-invalid">
+                                      {doctorName} (unavailable)
+                                    </span>
+                                  ) : (
+                                    doctorName
+                                  )
+                                ) : doctorState === "gap" ? (
+                                  <span className="rota-assignment-gap">Unassigned GAP</span>
                                 ) : (
-                                  doctorName || "—"
+                                  <span className="rota-assignment-invalid">Unassigned</span>
                                 )}
                               </div>
                             );
@@ -1248,16 +1279,24 @@ export default function WeekShiftsPage() {
                             const isInvalid =
                               Boolean(assignedId) &&
                               !eligible.some((a) => Number(a.id) === Number(assignedId));
+                            const isOverride = Boolean(s.assigned_staff_manual_override);
+                            const displayState = staffAssignmentDisplayState(assignedId, eligible);
+                            const displayName = assigned?.name ?? (assignedId ? `Staff #${assignedId}` : null);
                             return (
                               <div className="meta">
                                 Assistant:{" "}
-                                {assignedId ? (
-                                  <span className={isInvalid ? "rota-assignment-invalid" : undefined}>
-                                    {assigned?.name ?? `Staff #${assignedId}`}
-                                    {isInvalid ? " (unavailable)" : ""}
-                                  </span>
+                                {displayState === "assigned" ? (
+                                  isOverride ? (
+                                    <span className="rota-assignment-invalid">{displayName} (override)</span>
+                                  ) : isInvalid ? (
+                                    <span className="rota-assignment-invalid">{displayName} (unavailable)</span>
+                                  ) : (
+                                    displayName
+                                  )
+                                ) : displayState === "gap" ? (
+                                  <span className="rota-assignment-gap">Unassigned GAP</span>
                                 ) : (
-                                  "—"
+                                  <span className="rota-assignment-invalid">Unassigned</span>
                                 )}
                               </div>
                             );
