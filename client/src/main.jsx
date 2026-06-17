@@ -2,8 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
+import { AuthProvider } from "./AuthContext.jsx";
 import { BiweekAnchorProvider } from "./BiweekAnchorContext.jsx";
-import { ManagerAuthProvider } from "./ManagerAuthContext.jsx";
 import { TempIsolationProvider } from "./TempIsolationContext.jsx";
 import "./styles.css";
 
@@ -12,9 +12,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <BrowserRouter>
       <BiweekAnchorProvider>
         <TempIsolationProvider>
-          <ManagerAuthProvider>
+          <AuthProvider>
             <App />
-          </ManagerAuthProvider>
+          </AuthProvider>
         </TempIsolationProvider>
       </BiweekAnchorProvider>
     </BrowserRouter>
