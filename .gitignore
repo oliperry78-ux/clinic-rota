@@ -3,6 +3,9 @@ dist/
 *.sqlite
 *.sqlite-journal
 .env
+.env.local
+client/.env.local
+server/.env
 .DS_Store
 
 *.sqlite-wal
