@@ -10,13 +10,13 @@ import "./styles.css";
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <BrowserRouter>
-      <BiweekAnchorProvider>
-        <TempIsolationProvider>
-          <AuthProvider>
+      <TempIsolationProvider>
+        <AuthProvider>
+          <BiweekAnchorProvider>
             <App />
-          </AuthProvider>
-        </TempIsolationProvider>
-      </BiweekAnchorProvider>
+          </BiweekAnchorProvider>
+        </AuthProvider>
+      </TempIsolationProvider>
     </BrowserRouter>
   </React.StrictMode>
 );
