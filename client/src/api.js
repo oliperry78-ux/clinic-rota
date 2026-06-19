@@ -1,3 +1,5 @@
+import { supabase } from "./supabaseClient.js";
+
 /**
  * Production: set `VITE_API_URL` (e.g. https://clinic-rota-server.onrender.com) so `/api/*` hits Render.
  * Local dev: leave unset — same-origin `/api/*` is proxied by Vite to the Node backend.
@@ -8,6 +10,14 @@ function apiUrl(path) {
   const p = path.startsWith("/") ? path : `/${path}`;
   if (!API_BASE) return p;
   return `${API_BASE}${p}`;
+}
+
+async function getAuthHeaders() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.access_token) {
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
+  return {};
 }
 
 function parseJsonBody(text) {
@@ -31,8 +41,9 @@ function parseJsonBody(text) {
 }
 
 async function request(path, options = {}) {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(apiUrl(path), {
-    headers: { "Content-Type": "application/json", ...options.headers },
+    headers: { "Content-Type": "application/json", ...authHeaders, ...options.headers },
     ...options,
   });
   if (res.status === 204) return null;

@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { pool, withTransaction } from "./database.js";
 import { normalizeAvailabilityForStorage, parseAvailabilityJson } from "./scheduling.js";
 
@@ -71,8 +72,62 @@ function coerceJsonText(value, fallback) {
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+const SUPABASE_URL = (process.env.SUPABASE_URL || "").replace(/\/+$/, "") || null;
+if (!SUPABASE_URL) {
+  console.warn("[auth] WARNING: SUPABASE_URL is not set. All protected routes will return 401.");
+}
+const JWKS = SUPABASE_URL
+  ? createRemoteJWKSet(new URL(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`))
+  : null;
+
+async function requireAuth(req, res, next) {
+  if (!JWKS) {
+    return res.status(401).json({ error: "Server auth not configured (SUPABASE_URL missing)" });
+  }
+  const authHeader = req.headers["authorization"] ?? "";
+  if (!authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid authorization token" });
+  }
+  const token = authHeader.slice(7);
+  let payload;
+  try {
+    ({ payload } = await jwtVerify(token, JWKS));
+  } catch (err) {
+    console.error("[auth] jwtVerify failed", {
+      name: err?.name,
+      code: err?.code,
+      message: err?.message,
+      claim: err?.claim,
+      reason: err?.reason,
+    });
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+  const email = (payload.email ?? "").toLowerCase();
+  if (!email) {
+    return res.status(401).json({ error: "Token payload missing email" });
+  }
+  try {
+    const { rows } = await pool.query(
+      "SELECT role FROM allowed_users WHERE LOWER(email) = $1",
+      [email]
+    );
+    if (!rows[0]) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    req.user = { sub: payload.sub, email, role: rows[0].role };
+    next();
+  } catch (err) {
+    console.error("[auth] allowed_users query failed", err);
+    return res.status(500).json({ error: "Auth check failed" });
+  }
+}
+
+app.use(cors({ allowedHeaders: ["Content-Type", "Authorization"] }));
 app.use(express.json());
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
 
 const BIWEEK_ANCHOR_KEY = "biweek_week1_anchor_date";
 const DEFAULT_BIWEEK_ANCHOR = "2000-01-03";
@@ -91,7 +146,7 @@ function normalizeBiweekWeek1AnchorIso(raw) {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
 }
 
-app.get("/api/settings", async (_req, res) => {
+app.get("/api/settings", requireAuth, async (_req, res) => {
   try {
     await pool.query(`INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, [
       BIWEEK_ANCHOR_KEY,
@@ -106,7 +161,7 @@ app.get("/api/settings", async (_req, res) => {
   }
 });
 
-app.put("/api/settings", async (req, res) => {
+app.put("/api/settings", requireAuth, async (req, res) => {
   const incoming = String(req.body?.biweekWeek1AnchorDate ?? "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(incoming)) {
     return res.status(400).json({ error: "biweekWeek1AnchorDate (YYYY-MM-DD) required" });
@@ -137,7 +192,7 @@ app.get("/api/staff", async (_req, res) => {
   }
 });
 
-app.post("/api/staff", async (req, res) => {
+app.post("/api/staff", requireAuth, async (req, res) => {
   const { name, role, email, phone, staff_type, availability, capacity, allowed_clinics } = req.body;
   if (!name || !role) {
     return res.status(400).json({ error: "name and role are required" });
@@ -163,7 +218,7 @@ app.post("/api/staff", async (req, res) => {
   }
 });
 
-app.put("/api/staff/:id", async (req, res) => {
+app.put("/api/staff/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   const { name, role, email, phone, staff_type, availability, capacity, allowed_clinics } = req.body;
   try {
@@ -209,7 +264,7 @@ app.put("/api/staff/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/staff/:id", async (req, res) => {
+app.delete("/api/staff/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     return res.status(400).json({ error: "invalid staff id" });
@@ -357,7 +412,7 @@ app.put("/api/staff/:id/date-overrides", async (req, res) => {
 
 // ---------- Shifts (sessions: schedule metadata; no session-level staffing in this engine) ----------
 
-app.get("/api/shifts", async (req, res) => {
+app.get("/api/shifts", requireAuth, async (req, res) => {
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: "startDate and endDate query params required" });
@@ -376,7 +431,7 @@ app.get("/api/shifts", async (req, res) => {
   }
 });
 
-app.post("/api/shifts", async (req, res) => {
+app.post("/api/shifts", requireAuth, async (req, res) => {
   const shift_date = resolveShiftDateFromBody(req.body);
   const { start_time, end_time, required_role } = req.body;
   if (!shift_date || !start_time || !end_time) {
@@ -412,7 +467,7 @@ app.post("/api/shifts", async (req, res) => {
   }
 });
 
-app.delete("/api/shifts/:id", async (req, res) => {
+app.delete("/api/shifts/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   try {
     const del = await pool.query("DELETE FROM shifts WHERE id = $1", [id]);
@@ -424,7 +479,7 @@ app.delete("/api/shifts/:id", async (req, res) => {
   }
 });
 
-app.get("/api/clinic-day-receptionist-slots", async (req, res) => {
+app.get("/api/clinic-day-receptionist-slots", requireAuth, async (req, res) => {
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: "startDate and endDate query params required" });
@@ -457,7 +512,7 @@ app.get("/api/clinic-day-receptionist-slots", async (req, res) => {
   }
 });
 
-app.put("/api/clinic-day-receptionist-slots", async (req, res) => {
+app.put("/api/clinic-day-receptionist-slots", requireAuth, async (req, res) => {
   const shift_date = String(req.body?.shift_date ?? "").trim();
   const clinic = String(req.body?.clinic ?? "").trim();
   const staffIdsRaw = req.body?.staffIds;
@@ -503,7 +558,7 @@ app.put("/api/clinic-day-receptionist-slots", async (req, res) => {
   }
 });
 
-app.patch("/api/shifts/:id/assign", async (req, res) => {
+app.patch("/api/shifts/:id/assign", requireAuth, async (req, res) => {
   const shiftId = Number(req.params.id);
   try {
     const existingRes = await pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]);
@@ -541,7 +596,7 @@ app.patch("/api/shifts/:id/assign", async (req, res) => {
   }
 });
 
-app.patch("/api/shifts/:id", async (req, res) => {
+app.patch("/api/shifts/:id", requireAuth, async (req, res) => {
   const shiftId = Number(req.params.id);
   try {
     const existingRes = await pool.query("SELECT * FROM shifts WHERE id = $1", [shiftId]);
@@ -598,6 +653,6 @@ function augmentShiftRow(row) {
   };
 }
 
-app.listen(PORT, () => {
-  console.log(`Clinic rota API listening on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Clinic rota API listening on http://0.0.0.0:${PORT}`);
 });

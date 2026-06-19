@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from "rea
 import { formatDateUK } from "./dates.js";
 import { api } from "./api.js";
 import { configureBiweekWeek1Anchor, getBiweekWeek1AnchorMondayIso } from "./biweekAnchor.js";
+import { useAuth } from "./AuthContext.jsx";
 
 const BiweekAnchorContext = createContext(null);
 
@@ -15,6 +16,7 @@ function readAnchorFromLocalStorageDev() {
 }
 
 export function BiweekAnchorProvider({ children }) {
+  const { user, loading } = useAuth();
   const [anchorIso, setAnchorIso] = useState(null);
   const [loadError, setLoadError] = useState(null);
 
@@ -56,8 +58,10 @@ export function BiweekAnchorProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    reload();
-  }, [reload]);
+    if (!loading && user) {
+      reload();
+    }
+  }, [loading, user, reload]);
 
   return (
     <BiweekAnchorContext.Provider value={{ anchorIso, reload, loadError }}>{children}</BiweekAnchorContext.Provider>
