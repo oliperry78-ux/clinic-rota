@@ -1,12 +1,12 @@
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { BiweekAnchorBar } from "./BiweekAnchorContext.jsx";
 import { useAuth } from "./AuthContext.jsx";
-import { TempIsolationRedirect, useTempIsolation } from "./TempIsolationContext.jsx";
+import { useTempIsolation } from "./TempIsolationContext.jsx";
 import StaffPage from "./pages/StaffPage.jsx";
 import WeekShiftsPage from "./pages/WeekShiftsPage.jsx";
 import RotaPage from "./pages/RotaPage.jsx";
 import DateAvailabilityPage from "./pages/DateAvailabilityPage.jsx";
-import TempDateAvailabilityPage from "./pages/TempDateAvailabilityPage.jsx";
+import PublicAvailabilityPage from "./pages/PublicAvailabilityPage.jsx";
 import HolidayRequestsPage from "./pages/HolidayRequestsPage.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage.jsx";
@@ -15,9 +15,9 @@ import ResetPasswordPage from "./pages/ResetPasswordPage.jsx";
 export default function App() {
   const location = useLocation();
   const { user, loading, signOut } = useAuth();
-  const { lockedStaffId, tempV1LinkPending } = useTempIsolation();
-  const hideManagerChrome = Boolean(lockedStaffId || tempV1LinkPending);
-  const isTempPath = /\/temp-date-availability\/\d+\/?$/.test(location.pathname);
+  const { lockedStaffId } = useTempIsolation();
+  const isPublicAvailabilityPath = /\/availability\//.test(location.pathname);
+  const hideManagerChrome = Boolean(lockedStaffId || isPublicAvailabilityPath);
   // Auth pages must never render the internal app chrome (nav, BiweekAnchorBar, logout).
   // This covers all three standalone auth routes regardless of login state.
   const isAuthPath = ["/login", "/forgot-password", "/reset-password"].includes(
@@ -27,7 +27,7 @@ export default function App() {
   // While Supabase restores the existing session from localStorage, show a neutral
   // loading screen so authenticated users don't see a flash of the login page.
   // Skip the loading screen on public/auth paths that must open immediately.
-  if (loading && !isTempPath && !isAuthPath) {
+  if (loading && !isPublicAvailabilityPath && !isAuthPath) {
     return (
       <div className="app">
         <header className="header">
@@ -42,7 +42,6 @@ export default function App() {
 
   return (
     <div className="app">
-      <TempIsolationRedirect />
       <header className="header">
         <h1>Clinic staff rota</h1>
         {!hideManagerChrome && user && !isAuthPath ? (
@@ -90,10 +89,8 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           {/* Always public — must render even when a recovery session sets user */}
           <Route path="/reset-password" element={<ResetPasswordPage />} />
-          <Route
-            path="/temp-date-availability/:staffId"
-            element={<TempDateAvailabilityPage />}
-          />
+          {/* Token-based public availability link — no login required */}
+          <Route path="/availability/:token" element={<PublicAvailabilityPage />} />
 
           {/* Protected routes — redirect to /login when not authenticated */}
           <Route
@@ -116,6 +113,7 @@ export default function App() {
             path="/holiday-requests"
             element={user ? <HolidayRequestsPage /> : <Navigate to="/login" replace />}
           />
+          <Route path="*" element={<Navigate to={user ? "/" : "/login"} replace />} />
         </Routes>
       </main>
     </div>

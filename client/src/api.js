@@ -84,6 +84,19 @@ export const api = {
     ),
   putClinicDayReceptionistSlots: (body) =>
     request("/api/clinic-day-receptionist-slots", { method: "PUT", body: JSON.stringify(body) }),
+
+  // Public availability token routes — no login required
+  getPublicAvailability: (token) => request(`/api/public/availability/${token}`),
+  putPublicAvailability: (token, body) =>
+    request(`/api/public/availability/${token}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  // Protected token-management routes — require manager login
+  getAvailabilityToken: (staffId) => request(`/api/staff/${staffId}/availability-token`),
+  generateAvailabilityToken: (staffId) =>
+    request(`/api/staff/${staffId}/availability-token`, { method: "POST" }),
+  revokeAvailabilityToken: (staffId) =>
+    request(`/api/staff/${staffId}/availability-token`, { method: "DELETE" }),
+
   assignShiftStaff: (shiftId, assignedStaffId, assignOptions = {}) => {
     const body = { assigned_staff_id: assignedStaffId };
     if (typeof assignOptions.assigned_staff_manual_override === "boolean") {
