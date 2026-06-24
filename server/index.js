@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import { randomBytes } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { pool, withTransaction } from "./database.js";
 import { normalizeAvailabilityForStorage, parseAvailabilityJson } from "./scheduling.js";
@@ -182,7 +183,7 @@ app.put("/api/settings", requireAuth, async (req, res) => {
 
 // ---------- Staff ----------
 
-app.get("/api/staff", async (_req, res) => {
+app.get("/api/staff", requireAuth, async (_req, res) => {
   try {
     const { rows } = await pool.query("SELECT * FROM staff ORDER BY LOWER(name) ASC");
     res.json(rows.map(normalizeStaffRow));
@@ -299,7 +300,7 @@ function normalizeStaffRow(row) {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-app.get("/api/date-overrides", async (_req, res) => {
+app.get("/api/date-overrides", requireAuth, async (_req, res) => {
   try {
     const { rows } = await pool.query("SELECT staff_id, shift_date, override_type FROM staff_date_override");
     res.json({
@@ -333,7 +334,7 @@ function formatDateOverrideDate(v) {
  * - If payload contains only isAvailable:false overrides, we replace only 'unavailable' rows (leave available).
  * - If payload contains a mix, we replace both.
  */
-app.put("/api/staff/:id/date-overrides", async (req, res) => {
+app.put("/api/staff/:id/date-overrides", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     return res.status(400).json({ error: "invalid staff id" });
@@ -652,6 +653,197 @@ function augmentShiftRow(row) {
     date: shift_date,
   };
 }
+
+// ---------- Availability tokens ----------
+
+/**
+ * Public — no auth required.
+ * Returns the staff member's display name and their available-date overrides.
+ * Only exposes: name, dates marked available. Nothing else.
+ */
+app.get("/api/public/availability/:token", async (req, res) => {
+  const { token } = req.params;
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.staff_id, s.name
+       FROM availability_tokens t
+       JOIN staff s ON s.id = t.staff_id
+       WHERE t.token = $1 AND t.active = true`,
+      [token]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: "Link not found or no longer active" });
+    }
+    const { staff_id, name } = rows[0];
+    const ovRows = await pool.query(
+      `SELECT shift_date FROM staff_date_override
+       WHERE staff_id = $1 AND override_type = 'available'`,
+      [staff_id]
+    );
+    res.json({
+      name,
+      dateOverrides: ovRows.rows.map((r) => ({
+        date: formatDateOverrideDate(r.shift_date),
+        isAvailable: true,
+      })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
+});
+
+/**
+ * Public — no auth required.
+ * Replaces the staff member's available-date overrides (overrideScope = "available" only).
+ * The staff_id is resolved from the token — any staffId in the body is ignored.
+ * Updates last_used_at on each submission.
+ */
+app.put("/api/public/availability/:token", async (req, res) => {
+  const { token } = req.params;
+  const raw = req.body?.dateOverrides;
+  if (!Array.isArray(raw)) {
+    return res.status(400).json({ error: "dateOverrides array required" });
+  }
+  try {
+    const { rows } = await pool.query(
+      "SELECT staff_id FROM availability_tokens WHERE token = $1 AND active = true",
+      [token]
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ error: "Link not found or no longer active" });
+    }
+    const staffId = rows[0].staff_id;
+
+    await pool.query(
+      "UPDATE availability_tokens SET last_used_at = NOW() WHERE token = $1",
+      [token]
+    );
+
+    const dates = [];
+    for (const o of raw) {
+      const date = String(o?.date ?? "").trim();
+      if (ISO_DATE_RE.test(date) && o?.isAvailable !== false) dates.push(date);
+    }
+
+    await withTransaction(async (client) => {
+      await client.query(
+        "DELETE FROM staff_date_override WHERE staff_id = $1 AND override_type = 'available'",
+        [staffId]
+      );
+      const insSql = `
+        INSERT INTO staff_date_override (staff_id, shift_date, override_type)
+        VALUES ($1, $2, 'available')
+        ON CONFLICT (staff_id, shift_date, override_type) DO NOTHING
+      `;
+      for (const d of dates) {
+        await client.query(insSql, [staffId, d]);
+      }
+    });
+
+    const ovRows = await pool.query(
+      "SELECT shift_date FROM staff_date_override WHERE staff_id = $1 AND override_type = 'available'",
+      [staffId]
+    );
+    res.json({
+      dateOverrides: ovRows.rows.map((r) => ({
+        date: formatDateOverrideDate(r.shift_date),
+        isAvailable: true,
+      })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
+});
+
+/**
+ * Protected — returns current token status for one staff member.
+ * Returns { token, active, lastUsedAt } or { token: null, active: false, lastUsedAt: null }.
+ */
+app.get("/api/staff/:staffId/availability-token", requireAuth, async (req, res) => {
+  const staffId = Number(req.params.staffId);
+  if (!Number.isFinite(staffId) || staffId <= 0) {
+    return res.status(400).json({ error: "invalid staff id" });
+  }
+  try {
+    const staffCheck = await pool.query("SELECT id FROM staff WHERE id = $1", [staffId]);
+    if (!staffCheck.rows[0]) return res.status(404).json({ error: "staff not found" });
+
+    const { rows } = await pool.query(
+      "SELECT token, active, last_used_at FROM availability_tokens WHERE staff_id = $1 AND active = true ORDER BY created_at DESC LIMIT 1",
+      [staffId]
+    );
+    if (!rows[0]) {
+      return res.json({ token: null, active: false, lastUsedAt: null });
+    }
+    res.json({
+      token: rows[0].token,
+      active: rows[0].active,
+      lastUsedAt: rows[0].last_used_at ? rows[0].last_used_at.toISOString() : null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
+});
+
+/**
+ * Protected — generate or regenerate an availability token for a staff member.
+ * Atomically deactivates any existing active token (sets active=false, revoked_at=now)
+ * then inserts a fresh token.
+ */
+app.post("/api/staff/:staffId/availability-token", requireAuth, async (req, res) => {
+  const staffId = Number(req.params.staffId);
+  if (!Number.isFinite(staffId) || staffId <= 0) {
+    return res.status(400).json({ error: "invalid staff id" });
+  }
+  try {
+    const staffCheck = await pool.query("SELECT id FROM staff WHERE id = $1", [staffId]);
+    if (!staffCheck.rows[0]) return res.status(404).json({ error: "staff not found" });
+
+    const newToken = randomBytes(32).toString("hex");
+
+    await withTransaction(async (client) => {
+      await client.query(
+        "UPDATE availability_tokens SET active = false, revoked_at = NOW() WHERE staff_id = $1 AND active = true",
+        [staffId]
+      );
+      await client.query(
+        "INSERT INTO availability_tokens (staff_id, token) VALUES ($1, $2)",
+        [staffId, newToken]
+      );
+    });
+
+    res.status(201).json({ token: newToken });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
+});
+
+/**
+ * Protected — revoke a staff member's active token without creating a new one.
+ */
+app.delete("/api/staff/:staffId/availability-token", requireAuth, async (req, res) => {
+  const staffId = Number(req.params.staffId);
+  if (!Number.isFinite(staffId) || staffId <= 0) {
+    return res.status(400).json({ error: "invalid staff id" });
+  }
+  try {
+    const result = await pool.query(
+      "UPDATE availability_tokens SET active = false, revoked_at = NOW() WHERE staff_id = $1 AND active = true",
+      [staffId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "No active token found for this staff member" });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "database error" });
+  }
+});
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Clinic rota API listening on http://0.0.0.0:${PORT}`);
